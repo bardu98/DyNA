@@ -1,0 +1,31 @@
+{
+    "study_name": "my_cv_optimization_cadmus_02_02_26_HS",
+    "best_trial_number": 10,
+    "best_params": {
+        "dropout_rate": 0.47805461769215474,
+        "num_heads": 5,
+        "batch_size": 64,
+        "lr": 1.2764937047792502e-05,
+        "weight_decay": 8.322724281704737e-07,
+        "patience": 5
+    },
+    "best_metrics_mean": {
+        "mean_ACC": 0.8849780583754828,
+        "mean_AUROC": 0.9365124970796298,
+        "mean_F1": 0.8864270474476426,
+        "mean_MCC": 0.7708254316701002,
+        "mean_PR_AUC": 0.9204794267441967,
+        "mean_Sn": 0.9036491262041924,
+        "mean_Sp": 0.866521739130435
+    },
+    "best_metrics_std": {
+        "std_ACC": 0.005487124966228779,
+        "std_AUROC": 0.0035611258066816044,
+        "std_F1": 0.006464283380218841,
+        "std_MCC": 0.01147116658142361,
+        "std_PR_AUC": 0.011499465866079221,
+        "std_Sn": 0.017096518948764603,
+        "std_Sp": 0.0097801929384365
+    },
+    "total_trials": 100
+}

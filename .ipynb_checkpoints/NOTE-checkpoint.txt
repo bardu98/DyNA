@@ -1,0 +1,59 @@
+----------------------- FIRST PHASE and BENCHMARKING -----------------------
+
+Training and Validation Set: External data HS
+
+#######################
+Files to Process Data #
+#######################
+
+To process the data use : *data_processing_embedding.py*
+
+#################
+hyperparameters #
+#################
+
+We Used the external dataset (HS) with optuna to find the best hyperparameters:
+*Cadmus_hyperparameters.py*
+
+
+----------------------- MAIN PHASE -----------------------
+
+Training Set: Lymphoblastoid Human Cells
+Test Set: CD4+T Human Cells
+
+#######################
+Files to Process Data #
+#######################
+
+Wig (hg18) -> Wig (hg19)
+Train and Test Sets are Wig files mapped to hg18, so use the following file to converto the mapping to hg19: *Convert_Genome_hg18_to_hg19.py*
+                                
+Wig (hg19) -> .csv
+*creation_data_from_wig_to_csv.ipynb*
+
+.csv -> .pkl 
+*creation_data_from_csv_to_pkl.ipynb*
+
+###############
+Training File #
+###############
+
+To Train the Model (CadmusDNA) and obtain the final model(s): *train_CadmusDNA.py*
+We used 5-fold cross validation to obtain 5 models *best_model_weights_99_8_percentile_fold{fold}.pt* (fold in [0,5)).
+
+################
+Explainability #
+################
+
+##Run the predictions notebook to produce the files of predictions before run the *CadmusDNA_explainability_study.ipynb*
+
+After the training phase, the following notebook can be wased to discover interesting features for the explainability:
+*CadmusDNA_explainability_study.ipynb*
+
+
+
+
+
+
+
+

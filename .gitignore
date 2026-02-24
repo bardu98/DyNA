@@ -1,0 +1,6 @@
+# Dataset e file genomici
+*.wig
+*.csv
+*.fasta
+*.pkl
+*.pt

@@ -1,0 +1,110 @@
+#!/bin/bash
+# Script ROBUSTO per convertire TUTTI i cromosomi da hg18 a hg19
+# Se un file fallisce, scrive ERRORE e passa al successivo.
+
+# --- CONFIGURAZIONE PERCORSI ---
+TOOLS_DIR=".."
+
+HG18_SIZES="$TOOLS_DIR/hg18.chrom.sizes"
+HG19_SIZES="$TOOLS_DIR/hg19.chrom.sizes"
+CHAIN_FILE="$TOOLS_DIR/hg18ToHg19.over.chain.gz"
+
+echo "### INIZIO ELABORAZIONE BATCH ROBUSTA ###"
+
+# Verifica preliminare degli strumenti
+if [ ! -f "$HG18_SIZES" ]; then
+    echo "ERRORE FATALE: Non trovo $HG18_SIZES nella directory precedente!"
+    exit 1
+fi
+
+# Ciclo su tutti i file
+for gz_file in ActivatedNucleosomes-chr*-scores.vstep.gz
+do
+    echo "----------------------------------------------------------------"
+    echo ">>> Processando file: $gz_file"
+    
+    # Definisci i nomi base
+    BASENAME="${gz_file%-scores.vstep.gz}"
+    INPUT_WIG="${BASENAME}-scores.vstep"
+    OUTPUT_WIG="${BASENAME}.hg19.wig"
+    
+    # Nomi file intermedi
+    HG18_BW="${BASENAME}.hg18.bw"
+    HG18_BG="${BASENAME}.hg18.bedGraph"
+    HG19_UNSORTED="${BASENAME}.hg19.unsorted.bedGraph"
+    HG19_SORTED="${BASENAME}.hg19.sorted.bedGraph"
+    HG19_MERGED="${BASENAME}.hg19.merged.bedGraph"
+    UNMAPPED="${BASENAME}.unmapped"
+    HG19_BW="${BASENAME}.hg19.bw"
+
+    # --- INIZIO BLOCCO PROTETTO (TRY-CATCH) ---
+    (
+        # Attiva stop-on-error SOLO per questo blocco
+        set -e 
+
+        # 1. Decompressione
+        if [ ! -f "$INPUT_WIG" ]; then
+            echo "   [1/7] Decompressione..."
+            gunzip -k "$gz_file"
+        else
+            echo "   [1/7] File decompresso già presente."
+        fi
+
+        # 2. Conversione WIG -> BigWig (hg18)
+        echo "   [2/7] Conversione WIG -> BigWig (hg18)..."
+        "$TOOLS_DIR/wigToBigWig" "$INPUT_WIG" "$HG18_SIZES" "$HG18_BW"
+
+        # 3. BigWig -> BedGraph
+        echo "   [3/7] Conversione BigWig -> BedGraph..."
+        "$TOOLS_DIR/bigWigToBedGraph" "$HG18_BW" "$HG18_BG"
+
+        # 4. LiftOver
+        echo "   [4/7] Esecuzione LiftOver..."
+        "$TOOLS_DIR/liftOver" "$HG18_BG" "$CHAIN_FILE" "$HG19_UNSORTED" "$UNMAPPED"
+
+        # 5. Ordinamento
+        echo "   [5/7] Ordinamento..."
+        export LC_COLLATE=C
+        sort -k1,1 -k2,2n "$HG19_UNSORTED" > "$HG19_SORTED"
+
+        # 6. Unione sovrapposizioni
+        echo "   [6/7] Risoluzione sovrapposizioni..."
+        bedtools merge -i "$HG19_SORTED" -d -1 -c 4 -o mean > "$HG19_MERGED"
+
+        # 7. Creazione finale
+        echo "   [7/7] Creazione file finale hg19..."
+        "$TOOLS_DIR/bedGraphToBigWig" "$HG19_MERGED" "$HG19_SIZES" "$HG19_BW"
+        "$TOOLS_DIR/bigWigToWig" "$HG19_BW" "$OUTPUT_WIG"
+        
+    ) 
+    # --- FINE BLOCCO PROTETTO ---
+
+    # Controlliamo com'è andata l'esecuzione dentro le parentesi
+    STATUS=$?
+
+    if [ $STATUS -ne 0 ]; then
+        # C'è stato un errore
+        echo "#############################################################"
+        echo "❌ ERRORE CRITICO durante l'elaborazione di: $gz_file"
+        echo "   Il file è stato saltato. Passo al prossimo."
+        echo "#############################################################"
+        
+        # Pulizia di emergenza per questo file specifico
+        rm -f "$INPUT_WIG" "$HG18_BW" "$HG18_BG" "$HG19_UNSORTED" "$HG19_SORTED" "$HG19_MERGED" "$HG19_BW" "$UNMAPPED" "$OUTPUT_WIG"
+        
+        # Continua con il prossimo file nel ciclo for
+        continue
+    else
+        # Tutto bene
+        echo "✅ SUCCESSO! File creato: $OUTPUT_WIG"
+        
+        # Pulizia file intermedi (solo se successo)
+        echo "   [PULIZIA] Rimozione file intermedi..."
+        rm "$INPUT_WIG" "$HG18_BW" "$HG18_BG" "$HG19_UNSORTED" "$HG19_SORTED" "$HG19_MERGED" "$HG19_BW" "$UNMAPPED"
+        
+        ls -lh "$OUTPUT_WIG"
+    fi
+    
+done
+
+echo "### ELABORAZIONE BATCH TERMINATA ###"
