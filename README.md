@@ -56,3 +56,54 @@ One of the core strengths of CadmusDNA is its ability to extract biological insi
 
 Once the predictions are generated, you can discover interesting mechanistic and regulatory features by running the explainability notebook:
 `CadmusDNA_explainability_study.ipynb`
+
+---
+
+## 🚀 Inference
+
+To generate predictions and extract attention matrices on new data, you can use the `inference.py` script via the command line.
+
+### 📦 Required Data Format
+The input dataset must be a `.pkl` (Pickle) file containing a **list of dictionaries**. Each dictionary represents a single sample and **must** contain the keys `'sequence'` (the forward DNA sequence) and `'rev_sequence'` (its reverse complement). 
+
+*Example of the `.pkl` structure:*
+```python
+[
+    {
+        'sequence': 'GATGAGTAGAATCCCCCAGAAAGGAG...',
+        'rev_sequence': '...CTCCTTTCTGGGGGATTCTACTCATC'
+    },
+    {
+        'sequence': 'ATGCGTACGTAGCTAGCTAGCTAGCA...',
+        'rev_sequence': '...TGCTAGCTAGCTAGCTACGTACGCAT'
+    }
+]
+```
+
+### 💻 How to Run the Script
+
+Execute the script from the terminal by specifying the path to your dataset and the trained model weights (`.pt`):
+
+```bash
+python inference.py \
+  --dataset "path/to/your/dataset.pkl" \
+  --weights "path/to/your/best_model_weights.pt" \
+  --output_dir "./results" \
+  --batch_size 32
+```
+
+### ⚙️ Available Parameters
+
+| Argument | Description | Default | Required |
+| :--- | :--- | :---: | :---: |
+| `--dataset` | Path to the `.pkl` file containing the data to analyze. | - | ✅ Yes |
+| `--weights` | Path to the model weights file (`.pt`). | - | ✅ Yes |
+| `--output_dir`| Directory where results will be saved. Created automatically if it doesn't exist. | `./results` | ❌ No |
+| `--batch_size`| Batch size for inference (reduce if you encounter VRAM/memory issues). | `32` | ❌ No |
+
+### 📂 Generated Output Files
+
+Upon completion, you will find the following files in the directory specified by `--output_dir` (e.g., `./results`):
+1. 📄 **`predictions.csv`**: A CSV file containing the computed probabilities (`probabilities`) and the predicted labels (`predictions`) for each sequence.
+2. 🧠 **`attention_matrices.pkl`**: A Pickle file containing the raw attention matrix tensors for each sample, ready for downstream analysis.
+3. 📊 **`attention_sample_0.png`**: A bar chart (PNG) visually displaying the Attention Score across 6-mers for the first sample in your dataset.
