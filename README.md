@@ -68,7 +68,7 @@ python predictions.py --dataset act
 | :--- | :--- | :---: | :---: |
 | `--dataset` | The target dataset to process. Choices: `lympho`, `act`, `rest`. | - | ✅ Yes |
 
-After running the script, the following files will be automatically generated and saved in your working directory (ready to be fed into the explainability tool):
+After running the script, the following files will be automatically generated and saved in results directory (ready to be fed into the explainability tool):
 * **`preds_[dataset]_model_fold[0-4]...pkl`**: Individual prediction probabilities for each of the 5 folds.
 * **`preds_[dataset]_model_sum_folds...pkl`**: The final averaged ensemble predictions.
 * **`matrices_results_fold[0-4]_[dataset].pt`**: PyTorch checkpoint files containing the extracted raw attention matrices (`matrices_dir` and `matrices_rc`).
