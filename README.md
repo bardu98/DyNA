@@ -16,8 +16,11 @@ To process the external HS data and generate the necessary embeddings, use:
 `data_processing_embedding.py`
 
 ### 2. Hyperparameter Optimization
-We utilized the Optuna framework on the external HS dataset to search for the best model configuration. To run the hyperparameter search, use:
-`Cadmus_hyperparameters.py`
+To run the hyperparameter optimization, execute: `hyperparameters_searching_and_benchmarking_results.py`
+
+We utilized the Optuna framework on the external HS dataset to search for the optimal model configuration. Notably, while performing the search, this script simultaneously outputs the model's performance on the blind test set that is left out during cross-validation. 
+
+The optimization results and the complete trial history are persistently stored in an SQLite database. You can access them using the study name `optuna_results` within the `optuna_results.db` file. 
 
 ---
 
