@@ -15,7 +15,6 @@ import glob # Per cercare i file
 # GLOBAL CONFIG
 #################################################################################################
 
-# Processa tutti i cromosomi standard
 CHROMS_TO_PROCESS = [f"chr{i}" for i in range(1, 23)] + ["chrX", "chrY"]
 
 #################################################################################################
@@ -54,17 +53,15 @@ def download_hg19_genome(output_dir="hg19_genome"):
         file_name = f"{chrom}.fa.gz"
         file_path = os.path.join(output_dir, file_name)
         
-        # Percorso del file decompresso
         unzipped_file_path = file_path.replace('.gz', '')
 
         if os.path.exists(unzipped_file_path):
             print(f"✓ {chrom} (hg19) già scaricato")
-            # Carica sequenza già presente
             try:
                 with open(unzipped_file_path, 'r') as f:
                     records = SeqIO.parse(f, "fasta")
                     for record in records:
-                        genome_dict[chrom] = str(record.seq).upper() # Salva in maiuscolo
+                        genome_dict[chrom] = str(record.seq).upper()
                 continue
             except Exception as e:
                 print(f"✗ Errore nel caricamento di {unzipped_file_path}: {e}. Tento di riscaricarlo.")
@@ -76,35 +73,30 @@ def download_hg19_genome(output_dir="hg19_genome"):
         try:
             response = requests.get(url, stream=True, timeout=300)
             if response.status_code == 200:
-                # Salva file compresso
                 with open(file_path, 'wb') as f:
                     for chunk in response.iter_content(chunk_size=8192):
                         f.write(chunk)
                 
-                # Decomprimi e leggi
                 sequence_content = ""
                 with gzip.open(file_path, 'rt') as f:
                     sequence_content = f.read()
                 
-                # Parse dalla stringa
                 with StringIO(sequence_content) as f_in:
                     records = SeqIO.parse(f_in, "fasta")
                     for record in records:
-                        seq_str = str(record.seq).upper() # Salva in maiuscolo
+                        seq_str = str(record.seq).upper() 
                         genome_dict[chrom] = seq_str
                         print(f"✓ {chrom} (hg19) scaricato: {len(seq_str):,} bp")
                 
-                # Salva versione decompressa
                 with open(unzipped_file_path, 'w') as f_out:
                     f_out.write(sequence_content)
                 
-                # Rimuovi file compresso per salvare spazio
                 os.remove(file_path)
                 
         except Exception as e:
             print(f"✗ Errore scaricamento {chrom} (hg19): {e}")
             if os.path.exists(file_path):
-                os.remove(file_path) # Pulisci file corrotto
+                os.remove(file_path) 
             continue
     
     print(f"\n✓ Genoma hg19 scaricato: {len(genome_dict)} cromosomi")
@@ -128,7 +120,7 @@ def load_hg19_genome(genome_dir="hg19_genome"):
                 with open(file_path, 'r') as f:
                     records = SeqIO.parse(f, "fasta")
                     for record in records:
-                        seq_str = str(record.seq).upper() # Assicurati sia maiuscolo
+                        seq_str = str(record.seq).upper() 
                         genome_dict[chrom] = seq_str
                         print(f"✓ {chrom} (hg19) caricato: {len(seq_str):,} bp")
             except Exception as e:
@@ -167,7 +159,6 @@ def parse_wig_file(wig_file_path, max_regions=500000000):
             for line in f:
                 line = line.strip()
                 
-                # Salta intestazioni e righe vuote
                 if not line or line.startswith('track') or line.startswith('browser'):
                     continue
                 
@@ -180,7 +171,6 @@ def parse_wig_file(wig_file_path, max_regions=500000000):
                     print(f"    ⚠ Raggiunto limite di {max_regions:,} regioni, stop parsing")
                     break
                 
-                # --- GESTIONE HEADER ---
                 if line.startswith('fixedStep'):
                     parts = line.split()
                     for part in parts:
@@ -201,22 +191,20 @@ def parse_wig_file(wig_file_path, max_regions=500000000):
                             current_chrom = part.split('=')[1]
                         elif part.startswith('span='):
                             current_span = int(part.split('=')[1])
-                    current_step = None # Flag per variableStep
+                    current_step = None 
                 
                 # --- GESTIONE DATA LINE ---
                 else:
                     try:
                         parts = line.split()
                         
-                        # --- MODIFICA CHIAVE: Controlla il formato (bedGraph, variableStep, fixedStep) ---
                         
                         if len(parts) >= 4:
-                            # Formato bedGraph (chr start end value ...)
                             chrom, start_str, end_str, value_str = parts[0], parts[1], parts[2], parts[3]
                             if chrom not in CHROMS_TO_PROCESS:
                                 continue
                             value = float(value_str)
-                            if value > 0: # Filtro originale (corretto, se i dati sono >= 1)
+                            if value > 0: 
                                 regions.append({
                                     'chr': chrom,
                                     'start': int(start_str),
@@ -225,7 +213,6 @@ def parse_wig_file(wig_file_path, max_regions=500000000):
                                 })
                         
                         elif len(parts) == 2 and current_step is None:
-                            # Formato variableStep (pos value)
                             if current_chrom not in CHROMS_TO_PROCESS:
                                 continue
                             pos, value_str = parts[0], parts[1]
@@ -240,7 +227,6 @@ def parse_wig_file(wig_file_path, max_regions=500000000):
                                 })
                         
                         elif len(parts) == 1 and current_step is not None:
-                            # Formato fixedStep (value)
                             if current_chrom not in CHROMS_TO_PROCESS:
                                 continue
                             value = float(parts[0])
@@ -253,10 +239,8 @@ def parse_wig_file(wig_file_path, max_regions=500000000):
                                 })
                             position += current_step
                         
-                        # Altri formati (es. bedGraph senza header) vengono ignorati
 
                     except Exception:
-                        # Salta righe dati malformate
                         continue
             
         print(f"    ✓ Trovate {len(regions):,} regioni con segnale (Tutti i cromosomi)")
@@ -279,9 +263,8 @@ def filter_regions_by_feature(df_regions, df_features):
 
     if df_features is None or df_features.empty:
         print("  ⚠ Nessuna annotazione feature fornita, ritorno tutte le regioni (nessun filtro).")
-        return df_regions # <-- Restituisce tutto se non c'è filtro
+        return df_regions 
 
-    # Crea dizionario cromosoma → array di (start, end) per efficienza
     try:
         df_features_by_chr = {
             chrom: df_features[df_features['chr'] == chrom][['start', 'end']].values
@@ -304,11 +287,10 @@ def filter_regions_by_feature(df_regions, df_features):
         if s is None or e is None:
             continue
 
-        # Cerca sovrapposizione
         for f_start, f_end in df_features_by_chr[chrom]:
             if not (e < f_start or s > f_end):  
                 keep[i] = True
-                break # Trovata sovrapposizione, passa alla prossima regione
+                break 
 
     filtered_df = df_regions[keep]
     print(f"  ✓ {len(filtered_df):,}/{len(df_regions):,} regioni trovate nei feature forniti.")
@@ -335,32 +317,26 @@ def identify_nucleosome_positions(df_wig, threshold_value=1.0, sequence_length=2
     df_sorted = df_positive_candidates.sort_values('score', ascending=False)
     
     true_dyad_rows = []
-    claimed_tree = {} # Un albero di intervalli per le regioni già "bloccate"
+    claimed_tree = {} 
     
     min_separation = sequence_length  
 
     print(f"    Avvio Non-Maximum Suppression (min_sep = {min_separation} bp)...")
     
-    # Inizializza gli alberi per i cromosomi
     for chrom in df_sorted['chr'].unique():
-        if chrom in CHROMS_TO_PROCESS: # Processa solo i nostri cromosomi
+        if chrom in CHROMS_TO_PROCESS: 
             claimed_tree[chrom] = IntervalTree()
 
-    # Itera dal picco più forte in giù
     for row in df_sorted.itertuples(index=False):
         
-        # Ignora cromosomi non standard
         if row.chr not in claimed_tree:
             continue
             
-        # Controlla se questo picco è già stato "bloccato" da un picco più forte
         if claimed_tree[row.chr].overlaps(row.start, row.end):
-            continue # Sì, ignora questo picco
+            continue 
             
-        # Se non è bloccato, è un VERO picco!
         true_dyad_rows.append(row)
         
-        # Blocca la regione attorno ad esso
         buffer_start = row.start - (min_separation // 2)
         buffer_end = row.start + (min_separation // 2) + 1 
         claimed_tree[row.chr].addi(buffer_start, buffer_end)
@@ -373,7 +349,6 @@ def identify_nucleosome_positions(df_wig, threshold_value=1.0, sequence_length=2
 
     df_true_dyads = pd.DataFrame(true_dyad_rows, columns=df_sorted.columns)
 
-    # Espandi i centri (diadi) alla lunghezza finale della sequenza (201 bp)
     df_true_dyads['center'] = (df_true_dyads['start'] + df_true_dyads['end']) // 2
     df_true_dyads['start'] = df_true_dyads['center'] - (sequence_length // 2)
     df_true_dyads['end'] = df_true_dyads['start'] + sequence_length
@@ -393,10 +368,8 @@ def identify_non_nucleosome_positions(df_wig, threshold_value=1.0, nucleosome_le
 
     print(f"    Soglia segnale (Negativi): == {threshold_value:.2f}")
     
-    # Filtra regioni con segnale BASSO (esattamente il background)
     df_nucleosomes = df_wig[df_wig['score'] == threshold_value].copy()
     
-    # Estendi regioni alla lunghezza desiderata
     df_nucleosomes['center'] = (df_nucleosomes['start'] + df_nucleosomes['end']) // 2
     df_nucleosomes['start'] = df_nucleosomes['center'] - nucleosome_length // 2
     df_nucleosomes['end'] = df_nucleosomes['start'] + nucleosome_length
@@ -416,7 +389,6 @@ def extract_sequences_from_genome(df_regions, genome_dict, max_sequences=2000):
     
     count = 0
     processed = 0
-    # Mescola per ottenere un campione rappresentativo se max_sequences è basso
     df_shuffled = df_regions.sample(frac=1)  
     
     for idx, row in df_shuffled.iterrows():
@@ -464,7 +436,6 @@ def extract_filtered_sequences_efficiently(df_regions, df_features, genome_dict,
     sequences = []
     chromosomes = [] 
     
-    # 1. Crea il dizionario di features per una ricerca rapida
     df_features_by_chr = None
     if df_features is not None and not df_features.empty:
         print("  (Filtro feature ATTIVO)")
@@ -479,13 +450,11 @@ def extract_filtered_sequences_efficiently(df_regions, df_features, genome_dict,
     else:
         print("  (Filtro feature DISABILITATO)")
 
-    # 2. Mescola i candidati (df_regions)
     df_regions_shuffled = df_regions.sample(frac=1)
 
     processed_count = 0
     excluded_by_buffer = 0
     
-    # 3. Itera, filtra, ed estrai in un unico loop
     for row in df_regions_shuffled.itertuples(index=False):
         processed_count += 1
         
@@ -496,17 +465,15 @@ def extract_filtered_sequences_efficiently(df_regions, df_features, genome_dict,
         if s is None or e is None or chrom is None or chrom not in CHROMS_TO_PROCESS:
             continue
             
-        # --- CONTROLLO 1: ZONA CUSCINETTO ---
         buffer_start = s - buffer_zone
         buffer_end = e + buffer_zone
         if chrom in positive_regions_tree and positive_regions_tree[chrom].overlaps(buffer_start, buffer_end):
             excluded_by_buffer += 1
-            continue # Questo negativo è troppo vicino a un positivo, scartalo.
+            continue 
         
-        # --- CONTROLLO 2: FILTRO FEATURE (es. promotori) ---
         if df_features_by_chr is not None:
             if chrom not in df_features_by_chr:
-                continue # Regione in un cromosoma senza feature
+                continue 
                 
             has_overlap = False
             for f_start, f_end in df_features_by_chr[chrom]:
@@ -515,11 +482,9 @@ def extract_filtered_sequences_efficiently(df_regions, df_features, genome_dict,
                     break
             
             if not has_overlap:
-                continue # Non è in un feature, passa al prossimo candidato
+                continue 
 
-        # --- Se siamo qui, la regione E' valida (o non filtrata) E NON è vicina a un positivo ---
         
-        # Logica di 'extract_sequences_from_genome'
         start = int(s)
         end = int(e)
         
@@ -537,11 +502,9 @@ def extract_filtered_sequences_efficiently(df_regions, df_features, genome_dict,
         if 'N' in seq:
             continue
 
-        # --- Se siamo qui, la sequenza è VALIDA ---
         sequences.append(seq)
         chromosomes.append(chrom) 
         
-        # Logica di 'stop'
         if len(sequences) >= max_sequences:
             print(f"    ✓ Raggiunto limite di {max_sequences} sequenze valide (processati {processed_count:,} candidati).")
             print(f"    (Scartati {excluded_by_buffer:,} candidati per vicinanza ai positivi)")
@@ -582,7 +545,6 @@ def create_nucleosome_dataset(wig_files, genome_dict,
     all_labels = []
     all_chromosomes = [] 
     
-    # Processa TUTTI i file WIG
     for idx, wig_file in enumerate(wig_files, 1):
         print(f"\n[{idx}/{len(wig_files)}] Processando: {os.path.basename(wig_file)}")
         
@@ -606,28 +568,24 @@ def create_nucleosome_dataset(wig_files, genome_dict,
             print(f"  ⚠ Impossibile calcolare percentile.")
             continue
 
-        # 1a. Trova TUTTI i positivi usando la soglia calcolata
         df_nucleosomes_high = identify_nucleosome_positions(
             df_wig,  
             threshold_value=calculated_threshold_high, # <-- Passa il valore calcolato
             sequence_length=sequence_length
         )
         
-        # 1b. Filtra i positivi SOLO per i feature (se forniti)
         df_positive_filtered = filter_regions_by_feature(df_nucleosomes_high, df_features)
 
         if df_positive_filtered.empty:
             print("  ⚠ Nessuna regione positiva trovata [dopo il filtro], skip file")
             continue
             
-        # 1c. Estrai sequenze
         sequences_pos, chroms_pos = extract_sequences_from_genome(
             df_positive_filtered,  
             genome_dict,  
             max_sequences=max_sequences_per_file  
         )
         
-        # --- Crea l'albero dei positivi per la zona cuscinetto ---
         print("    Creazione albero intervalli positivi per zona cuscinetto...")
         positive_tree = {}
         for chrom in df_nucleosomes_high['chr'].unique():
@@ -641,7 +599,7 @@ def create_nucleosome_dataset(wig_files, genome_dict,
         # -----------------------------------------------------------------
         print("\n  --- Stream Negativo (Label 0) ---")
         
-        n_to_find = len(sequences_pos) # Numero di negativi da trovare
+        n_to_find = len(sequences_pos) 
         if n_to_find == 0:
              print("  ⚠ Nessuna sequenza positiva trovata, skip negativi")
              continue
@@ -696,12 +654,10 @@ def create_nucleosome_dataset(wig_files, genome_dict,
             sequences_neg = list(sequences_neg_sampled)
             chroms_neg = list(chroms_neg_sampled)
 
-        # Aggiungi i dati positivi
         all_sequences.extend(sequences_pos)
         all_labels.extend([1] * len(sequences_pos))
         all_chromosomes.extend(chroms_pos) 
         
-        # Aggiungi i dati negativi
         all_sequences.extend(sequences_neg)
         all_labels.extend([0] * len(sequences_neg))
         all_chromosomes.extend(chroms_neg) 
@@ -721,9 +677,7 @@ def create_nucleosome_dataset(wig_files, genome_dict,
         'chr': all_chromosomes 
     })
     
-    # Rimuovi duplicati basati sulla sequenza (mantiene chr e label del primo)
     df = df.drop_duplicates(subset=['sequenza']).reset_index(drop=True)
-    # Mescola il dataset finale
     df = df.sample(frac=1, random_state=42).reset_index(drop=True)
     
     print("\n" + "="*60)
@@ -747,19 +701,16 @@ def main():
     print("ELABORAZIONE DATI NUCLEOSOMI GSE36979 (HG19 - INTERO GENOMA)")
     print("="*60)
 
-    # Imposta directory dati
     base_dir = os.getcwd()
-    #data_dir = os.path.abspath(os.path.join(base_dir, "..", "data", "lymphoblasotid_data")) #os.path.abspath(os.path.join(base_dir, "..", "data", "cd4t_data"))
+
     data_dir = os.path.abspath(os.path.join(base_dir, "..", "data", "cd4t_data"))
     if not os.path.exists(data_dir):
         os.makedirs(data_dir)
         print(f"Creata directory dati: {data_dir}")
 
-    # STEP 1: Trova i file WIG hg19
     print("\n" + "="*60)
     print(f"Ricerca file *_147.hg19.wig in {data_dir}")
     
-    #wig_search_path = os.path.join(data_dir, "*.hg19.wig")#
     wig_search_path = os.path.join(data_dir, "ActivatedNucleosomes-chr*.hg19.wig")
     wig_files = glob.glob(wig_search_path)
     
@@ -772,7 +723,6 @@ def main():
         for f in wig_files:
             print(f"  - {os.path.basename(f)}")
 
-    # STEP 2: Scarica/Carica genoma hg19 (TUTTI I CROMOSOMI)
     print("\n" + "="*60)
     genome_dir = os.path.join(data_dir, "hg19_genome") 
 
@@ -789,9 +739,7 @@ def main():
         print("✗ Impossibile caricare genoma hg19")
         return
 
-    # STEP 2.5: Filtro promotori DISABILITATO
     print("\n" + "="*60)
-    print("Filtro per promotori DISABILITATO. Si processa l'intero genoma.")
     df_features_to_use = None 
         
     # STEP 3: Crea dataset
@@ -799,7 +747,7 @@ def main():
         wig_files,  
         genome_dict,
         max_sequences_per_file=1000000, 
-        percentile_high=99.8, # <--- QUI ORA C'È SOLO IL PARAMETRO PERCENTILE
+        percentile_high=99.8, # <--- PERCENTILE
         threshold_low=1.0,            
         max_regions_per_wig=5000000000,
         df_features=df_features_to_use, 

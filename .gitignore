@@ -4,3 +4,6 @@
 *.fasta
 *.pkl
 *.pt
+MAIN PHASE/data/
+MAIN PHASE/models/
+MAIN PHASE/data/

@@ -1,7 +1,6 @@
 import pandas as pd
 import os
 import sys
-# Aggiunge la cartella src al path
 sys.path.append(os.path.abspath('../src'))
 from transformers import AutoTokenizer, AutoModel
 import torch
@@ -24,7 +23,7 @@ print(df_balanced['label'].value_counts())
 
 seqs = df["sequence"].str.upper().tolist()
 
-df["embedding"] = 0   #NON USO EMBEDDING DOPO, QUINDI POTREI LEVARLO
+df["embedding"] = 0   
 
 df = df[['sequence', 'label', 'embedding']].to_dict(orient='records')
 

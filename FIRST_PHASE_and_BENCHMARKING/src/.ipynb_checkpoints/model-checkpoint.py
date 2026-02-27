@@ -24,7 +24,6 @@ class TransformerNuc_Cadmus(nn.Module):
         )
 
     def forward(self, seq):
-        # # seq: (batch_size, seq_len, feature_dim) → no need to transpose
         out, attention_matrix = self.transoformer(seq)
         out = out[:, 0,:]
         out = self.final_linear(out)
@@ -37,42 +36,16 @@ class CadmusDNA(nn.Module):
     def __init__(self, att_module, att_parameters, device=None):
         super().__init__()
 
-        # Imposta il dispositivo
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
         print(f"Using device: {self.device}")
     
-        # # Carica modello e tokenizer una sola volta
-        # self.tokenizer = AutoTokenizer.from_pretrained(
-        #     "InstaDeepAI/nucleotide-transformer-2.5B-multi-species"
-        # )
-        # self.model_LLM = AutoModel.from_pretrained(
-        #     "InstaDeepAI/nucleotide-transformer-2.5B-multi-species",
-        #     torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32
-        # ).to(self.device)
-        # self.model_LLM.eval()
-    
-        # Inizializza i moduli
         self.attention_model = att_module(**att_parameters).to(self.device)
         self.linear_output = nn.Linear(2, 1).to(self.device)
         
-
-    # def batch_embeddings(self, sequences, batch_size=32):
-    #     """Calcola gli embedding completi per una lista di sequenze in batch."""
-    #     all_embeddings = []
-    #     for i in tqdm(range(0, len(sequences), batch_size), disable=True):
-    #         batch = sequences[i:i+batch_size]
-    #         tokens = self.tokenizer(batch, return_tensors="pt", padding=True, truncation=True).to(self.device)
-    #         with torch.no_grad():
-    #             outputs = self.model_LLM(**tokens)
-    #             # Mantiene tutti gli hidden states (nessun pooling)
-    #             batch_emb = outputs.last_hidden_state.cpu()
-    #         all_embeddings.extend(batch_emb)
-    #     return all_embeddings
         
 
     def forward(self, seqs):
-        #print(seqs)
-        #embedding_tot = torch.stack(self.batch_embeddings(seqs)).to(self.device)
+
         output_att, importance = self.attention_model(seqs)
         return output_att, importance
 
@@ -126,3 +99,4 @@ class SinusoidalPositionalEncoding(nn.Module):
 
     def forward(self, x):
         return x + self.pe[:, :x.size(1), :]
+

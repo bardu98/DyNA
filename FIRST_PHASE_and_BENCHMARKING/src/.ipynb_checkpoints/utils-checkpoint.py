@@ -31,50 +31,36 @@ def output_model_from_batch_final(batch, model, device):
 
     return output, output_rc, importance, importance_rc, labels
 
+
+
 def training_validation_and_test_loop_classification(
     model, dataloader_train, dataloader_validation, dataloader_test,
-    epochs=20, lr=0.001, patience=10, weight_decay=0, weight_tensor=None 
+    epochs=20, lr=0.001, patience=10, weight_decay=0, weigth_dict=None
 ):
-    # Recupera il device dal modello
     device = next(model.parameters()).device
 
-    criterion = nn.BCEWithLogitsLoss(pos_weight=weight_tensor) 
+    criterion = nn.BCEWithLogitsLoss(weight=weigth_dict)
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
 
     train_mcc_list, val_mcc_list, test_mcc_list = [], [], []
     loss_train, loss_val, loss_test = [], [], []
 
-    # Early Stopping and saveing
     best_state_cpu = None
     best_val_loss, best_epoch = float('inf'), 0
-    
-    # best epoch params
-    best_val_probs, best_true_val = [], []
-    final_test_probs, final_test_labels = [], []
 
     for epoch in range(epochs):
-        # ==================== TRAINING ====================
         model.train()
         total_loss, batch_count = 0.0, 0
         all_probs, all_labels = [], []
 
         for batch in dataloader_train:
             optimizer.zero_grad()
-            
-            output, output_rc, _, _, labels = output_model_from_batch_final(batch, model, device)
-            
+
+            output, output_rc, importance, importance_rc, labels = output_model_from_batch_final(batch, model, device)
+
             labels = labels.float().to(device)
 
-            loss = criterion(output, labels)
-            
-            if output_rc is not None:
-                loss += criterion(output_rc, labels)
-                # Media dei logit per le metriche
-                combined_logits = (output + output_rc) / 2
-            else:
-                combined_logits = output
-                assert False
-
+            loss = criterion(output, labels) + criterion(output_rc, labels)
 
             loss.backward()
             optimizer.step()
@@ -82,15 +68,16 @@ def training_validation_and_test_loop_classification(
             total_loss += loss.item()
             batch_count += 1
 
-            # Accumulo probabilità e label per MCC
-            probs = torch.sigmoid(combined_logits).detach().cpu().numpy()
+            # Prendi probabilità e spostale su CPU come numpy (detach per rimuovere grafo)
+            probs = torch.sigmoid((output + output_rc) / 2).detach().cpu().numpy()
             all_probs.extend(probs.tolist())
             all_labels.extend(labels.detach().cpu().numpy().tolist())
 
-        # Metriche Training di fine epoca
+
+        # calcoli training
         train_loss = total_loss / batch_count if batch_count > 0 else 0.0
         loss_train.append(train_loss)
-        
+
         if len(all_probs) > 0:
             train_preds = (np.array(all_probs) > 0.5).astype(int)
             train_mcc = matthews_corrcoef(all_labels, train_preds)
@@ -98,117 +85,90 @@ def training_validation_and_test_loop_classification(
             train_mcc = 0.0
         train_mcc_list.append(train_mcc)
 
-        # ==================== VALIDATION ====================
+        # === VALIDATION ===
         model.eval()
         val_total_loss, val_batches = 0.0, 0
-        val_probs, val_labels_list = [], []
+        val_probs, val_labels = [], []
 
         with torch.no_grad():
             for batch in dataloader_validation:
-                output, output_rc, _, _, labels = output_model_from_batch_final(batch, model, device)
+                output, output_rc, importance, importance_rc, labels = output_model_from_batch_final(batch, model, device)
                 labels = labels.float().to(device)
-                
-                loss = criterion(output, labels)
-                if output_rc is not None:
-                    loss += criterion(output_rc, labels)
-                    combined_logits = (output + output_rc) / 2
-                else:
-                    combined_logits = output
-                    assert False
 
+                loss = criterion(output, labels) + criterion(output_rc, labels)
 
                 val_total_loss += loss.item()
                 val_batches += 1
 
-                probs = torch.sigmoid(combined_logits).cpu().numpy()
+                probs = torch.sigmoid((output + output_rc) / 2).detach().cpu().numpy()
                 val_probs.extend(probs.tolist())
-                val_labels_list.extend(labels.cpu().numpy().tolist())
+                val_labels.extend(labels.detach().cpu().numpy().tolist())
+
 
         val_loss = val_total_loss / val_batches if val_batches > 0 else 0.0
         loss_val.append(val_loss)
-        
+
         if len(val_probs) > 0:
             val_preds = (np.array(val_probs) > 0.5).astype(int)
-            val_mcc = matthews_corrcoef(val_labels_list, val_preds)
+            val_mcc = matthews_corrcoef(val_labels, val_preds)
         else:
             val_mcc = 0.0
         val_mcc_list.append(val_mcc)
 
-        # ==================== TEST ====================
         test_total_loss, test_batches = 0.0, 0
-        test_probs_curr, test_labels_curr = [], []
+        test_probs, test_labels = [], []
 
         with torch.no_grad():
             for batch in dataloader_test:
-                output, output_rc, _, _, labels = output_model_from_batch_final(batch, model, device)
+                output, output_rc, importance, importance_rc, labels = output_model_from_batch_final(batch, model, device)
                 labels = labels.float().to(device)
 
-                loss = criterion(output, labels)
-                if output_rc is not None:
-                    loss += criterion(output_rc, labels)
-                    combined_logits = (output + output_rc) / 2
-                else:
-                    combined_logits = output
-                    assert False
-    
+                loss = criterion(output, labels) + criterion(output_rc, labels)
 
                 test_total_loss += loss.item()
                 test_batches += 1
 
-                probs = torch.sigmoid(combined_logits).cpu().numpy()
-                test_probs_curr.extend(probs.tolist())
-                test_labels_curr.extend(labels.cpu().numpy().tolist())
+                probs = torch.sigmoid((output + output_rc) / 2).detach().cpu().numpy()
+                test_probs.extend(probs.tolist())
+                test_labels.extend(labels.detach().cpu().numpy().tolist())
+
 
         test_loss = test_total_loss / test_batches if test_batches > 0 else 0.0
         loss_test.append(test_loss)
 
-        if len(test_probs_curr) > 0:
-            test_preds_curr = (np.array(test_probs_curr) > 0.5).astype(int)
-            test_mcc = matthews_corrcoef(test_labels_curr, test_preds_curr)
+        if len(test_probs) > 0:
+            test_preds = (np.array(test_probs) > 0.5).astype(int)
+            test_mcc = matthews_corrcoef(test_labels, test_preds)
         else:
             test_mcc = 0.0
         test_mcc_list.append(test_mcc)
 
-        # ==================== LOGGING & EARLY STOPPING ====================
-        print(f"Epoch {epoch+1}/{epochs}")
+        print(f"\nEpoch {epoch+1}/{epochs}")
         print(f"Train - Loss: {train_loss:.4f}, MCC: {train_mcc:.4f}")
         print(f"Val   - Loss: {val_loss:.4f}, MCC: {val_mcc:.4f}")
         print(f"Test  - Loss: {test_loss:.4f}, MCC: {test_mcc:.4f}")
         print(f"Learning Rate: {optimizer.param_groups[0]['lr']:.2e}")
 
-        # the model is the best on VALIDATION? 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             best_epoch = epoch
-            
-            # Salve model state on cpu
             best_state_cpu = {k: v.cpu().clone() for k, v in model.state_dict().items()}
-            
-            # Save best preds of the validation and test sets
+            final_test_probs = test_probs.copy() if len(test_probs) > 0 else []
             best_val_probs = val_probs.copy()
-            best_true_val = val_labels_list.copy()
-            final_test_probs = test_probs_curr.copy()
-            final_test_labels = test_labels_curr.copy()
+            best_true_val = val_labels.copy()
 
-        # Check patient
         if epoch - best_epoch >= patience:
             print(f"Early stopping at epoch {epoch+1}")
             break
-            
-        # clean the memory
-        gc.collect()
-        torch.cuda.empty_cache()
+
 
     epoch_best = best_epoch + 1
-    
     return (
         train_mcc_list, val_mcc_list, loss_train, loss_val,
         best_val_loss, best_state_cpu, epoch_best,
-        {'label': best_val_probs}, {'label': best_true_val},
-        best_true_val, best_val_probs, final_test_labels, final_test_probs, best_val_probs, best_true_val
+        {'label': val_probs}, {'label': val_labels},
+        val_labels, val_probs, test_labels, final_test_probs, best_val_probs, best_true_val
     )
-
-
 
 
 
