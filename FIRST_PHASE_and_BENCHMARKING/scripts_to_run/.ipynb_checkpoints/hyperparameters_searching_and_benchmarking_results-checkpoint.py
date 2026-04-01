@@ -260,11 +260,9 @@ def objective(trial):
         dataloader_internal_train = DataLoader(internal_train_subset, batch_size=hp_batch_size, shuffle=True, worker_init_fn=seed_worker, generator=g)
         dataloader_internal_val = DataLoader(internal_val_subset, batch_size=hp_batch_size, shuffle=True, worker_init_fn=seed_worker, generator=g)
         
-        # Test loader del fold
         test_subset_cv = Subset(dataset, val_idx) 
         dataloader_test_cv = DataLoader(test_subset_cv, batch_size=hp_batch_size, shuffle=False, worker_init_fn=seed_worker, generator=g)
         
-        # Setup Modello
         transf_parameters_att = {'input_dim': dim_embedding, 
                                  'dropout_rate': hp_dropout_rate, 
                                  'num_heads': hp_num_heads}
@@ -278,7 +276,6 @@ def objective(trial):
         
         model_internal = CadmusDNA(TransformerNuc_Cadmus, transf_parameters_att, device)
         
-        # --- training ---
         (train_mcc_list, val_mcc_list, loss_train, loss_val,
          best_val_loss, best_state_cpu, epoch_best,
          _dict_probs, _dict_labels, 
@@ -294,7 +291,6 @@ def objective(trial):
             patience=hp_patience
         )
 
-        # --- CALCOLO METRICHE (Loop su Validation e Test) ---
         evaluations = [
             (val_labels, val_probs, fold_metrics),          # Set 1: Validation
             (test_labels, final_test_probs, test_fold_metrics) # Set 2: Test
@@ -306,13 +302,11 @@ def objective(trial):
                 y_probs = np.array(y_probs_raw)
                 y_pred = (y_probs > 0.5).astype(int)
 
-                # Confusion Matrix
                 try:
                     tn, fp, fn, tp = confusion_matrix(y_true, y_pred, labels=[0,1]).ravel()
                 except ValueError:
                     tn, fp, fn, tp = 0, 0, 0, 0 
 
-                # Calcoli
                 sn = recall_score(y_true, y_pred, zero_division=0) 
                 sp = tn / (tn + fp) if (tn + fp) > 0 else 0.0      
                 acc = accuracy_score(y_true, y_pred)
@@ -325,7 +319,6 @@ def objective(trial):
                 except ValueError:
                     auroc, pr_auc = 0.5, 0.0 
 
-                # Accumulo
                 target_dict['Sn'].append(sn)
                 target_dict['Sp'].append(sp)
                 target_dict['ACC'].append(acc)
@@ -336,20 +329,17 @@ def objective(trial):
             else:
                 for k in target_dict: target_dict[k].append(-1.0)
 
-        # --- Pruning su MCC (Validation!) ---
+        # --- Pruning ON MCC 
         trial.report(np.mean(fold_metrics['MCC']), fold)
         if trial.should_prune():
             raise optuna.exceptions.TrialPruned()
 
-    # --- 4. Salvataggio User Attrs (Validation e Test) ---
     mean_val_mcc = np.mean(fold_metrics['MCC'])
     
-    # Save Validation metrics
     for metric_name, values in fold_metrics.items():
         trial.set_user_attr(f"internal_mean_{metric_name}", np.mean(values))
         trial.set_user_attr(f"internal_std_{metric_name}", np.std(values))
 
-    # Salve Test metrics 
     for metric_name, values in test_fold_metrics.items():
         trial.set_user_attr(f"test_mean_{metric_name}", np.mean(values))
         trial.set_user_attr(f"test_std_{metric_name}", np.std(values))
@@ -358,7 +348,7 @@ def objective(trial):
     return mean_val_mcc
 
 # -----------------------------------------------------------------
-# PARTE 2: ESECUZIONE OPTUNA
+# OPTUNA
 # -----------------------------------------------------------------
 
 print("--- AVVIO STUDIO OPTUNA ---")

@@ -70,12 +70,20 @@ def seed_worker(worker_id):
     np.random.seed(worker_seed)
     random.seed(worker_seed)
 
+def applica_mascheramento(dataset):
+    """Sostituisce con 'N' gli indici [18:36] e [162:180]"""
+    for d in dataset:
+        seq = d['sequence']
+        masked_seq = seq[:18] + ('N' * 18) + seq[36:162] + ('N' * 18) + seq[180:]
+        d['sequence'] = masked_seq
+    return dataset
 # ==============================================================================
 
 def main():
     parser = argparse.ArgumentParser(description="Script di Inferenza e Estrazione Matrici")
     parser.add_argument("--dataset", type=str, choices=['lympho', 'act', 'rest'], required=True, 
                         help="Scegli il dataset su cui effettuare l'inferenza")
+    parser.add_argument("--n_folds", type=int, required=True, help="Scegli il numero di fold")
     args = parser.parse_args()
 
     set_seed(42)
@@ -97,6 +105,8 @@ def main():
     print(f"\n[*] Caricamento dataset: {full_name.upper()}")
     with open(data_path, 'rb') as f:   
         dataset_raw = pickle.load(f)
+
+    dataset_raw = applica_mascheramento(dataset_raw)
 
     # RC Augmentation con Progress Bar
     print("[*] Applicazione Reverse Complement...")
@@ -131,25 +141,25 @@ def main():
         'num_heads': best_hyperparameters['num_heads']
     }   
 
-    dataset_obj = Nuc_Dataset(dataset_raw, max_length=37, rc_augmentation=True)
+    dataset_obj = Nuc_Dataset(dataset_raw, max_length=67, rc_augmentation=True)
     
     dataloader_infer = DataLoader(dataset_obj, batch_size=32, shuffle=False, worker_init_fn=seed_worker, generator=g, drop_last=False)
 
-    print("\n[*] inference on 5 Folds...")
+    print(f"\n[*] inference on {args.n_folds} Folds...")
     
-    for fold in tqdm(range(5), desc="Processing Folds", unit="fold"):
+    for fold in tqdm(range(args.n_folds), desc="Processing Folds", unit="fold"):
         
         best_model = CadmusDNA(TransformerNuc_Cadmus, transf_parameters_att, device)
-        state_dict = torch.load(f"best_model_weights_99_8_percentile_fold{fold}_03_03_26.pt", map_location=device)
+        state_dict = torch.load(f'best_model_weights_99_8_percentile_fold{fold}_MASKED_07_03_26.pt', map_location=device)#(f"best_model_weights_99_8_percentile_fold{fold}_03_03_26.pt", map_location=device)
         best_model.load_state_dict(state_dict)
         best_model.to(device)
         best_model.eval()
         
         metrics, val_labels, val_preds, importance, importance_rc, preds = test_classification(best_model, dataloader_infer, threshold=0.5)
         
-        tqdm.write(f"   -> Metriche Fold {fold}: MCC={metrics['MCC_val']:.3f}, AUC={metrics['AUC_val']:.3f}")
+        tqdm.write(f"   -> Metriche Fold {fold}: MCC={metrics['MCC']:.3f}, AUC={metrics['AUC']:.3f}")
         
-        nome_file_preds = f"../results/preds_{short_name}_model_fold{fold}_16_02_26.pkl"
+        nome_file_preds = f"../results/preds_{short_name}_model_fold{fold}_08_03_26_MASK.pkl"
         with open(nome_file_preds, 'wb') as file:
             pickle.dump(preds, file)
         
@@ -161,7 +171,7 @@ def main():
             'matrices_rc': all_matrices_rc,
             'fold_index': fold
         }
-        nome_file_matrici = f"../results/matrices_results_fold{fold}_{full_name}.pt"  #save now in results directory
+        nome_file_matrici = f"../results/matrices_results_fold{fold}_{full_name}_MASK_08_02_2026.pt"  #save now in results directory
         torch.save(checkpoint_data, nome_file_matrici)
 
     # ==============================================================================
@@ -169,18 +179,18 @@ def main():
     # ==============================================================================
     print("\n[*] Inizio aggregazione predizioni (Ensemble)...")
 
-    total_results = np.array(pd.read_pickle(f"preds_{short_name}_model_fold0_16_02_26.pkl"))
+    total_results = np.array(pd.read_pickle(f"../results/preds_{short_name}_model_fold0_08_03_26_MASK.pkl"))
 
-    for i in tqdm(range(1, 5), desc="Aggregating Folds", unit="fold"):
-        preds_list = pd.read_pickle(f"preds_{short_name}_model_fold{i}_16_02_26.pkl")
+    for i in tqdm(range(1, args.n_folds), desc="Aggregating Folds", unit="fold"):
+        preds_list = pd.read_pickle(f"../results/preds_{short_name}_model_fold{i}_08_03_26_MASK.pkl")
         total_results += np.array(preds_list)
 
-    final_predictions = total_results / 5
+    final_predictions = total_results / args.n_folds
 
     print(f"\nLunghezza totale predizioni: {len(final_predictions)}")
     print("Predizioni finali (primi 5 elementi):", final_predictions[:5])
 
-    nome_file_finale = f"preds_{full_name}_model_sum_folds_16_02_26.pkl"
+    nome_file_finale = f"../results/preds_{full_name}_model_sum_folds_08_03_26_MASK.pkl"
     with open(nome_file_finale, 'wb') as file:
         pickle.dump(final_predictions, file)
 

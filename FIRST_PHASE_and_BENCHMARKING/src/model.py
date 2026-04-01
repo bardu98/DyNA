@@ -2,10 +2,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-class TransformerNuc_Cadmus(nn.Module):
+class TransformerNuc_DyNA(nn.Module):
     def __init__(self, input_dim=2560, num_heads=8, dropout_rate=0.0, 
                  f_activation=nn.ReLU()):
-        super(TransformerNuc_Cadmus, self).__init__()
+        super(TransformerNuc_DyNA, self).__init__()
 
         self.transoformer = MyTransformer(embedding_dim=input_dim, num_heads=num_heads, dropout_rate=dropout_rate, activation=f_activation)
         self.act = f_activation
@@ -31,7 +31,7 @@ class TransformerNuc_Cadmus(nn.Module):
         return torch.squeeze(out), attention_matrix
 
 
-class CadmusDNA(nn.Module):
+class DyNA(nn.Module):
     
     def __init__(self, att_module, att_parameters, device=None):
         super().__init__()

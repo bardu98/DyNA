@@ -88,11 +88,6 @@ fold_results = []
 dataset_train_obj = Nuc_Dataset(data_train, max_length=37, rc_augmentation=True)
 
 for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(labels)), labels)):
-    
-    # # --- MODIFICA: Salta i primi 2 fold (indici 0 e 1) ---
-    # if fold < 2:
-    #     print(f"Skipping Fold {fold+1}...")
-    #     continue
         
     print(f"\n--- Fold {fold+1} ---")
 

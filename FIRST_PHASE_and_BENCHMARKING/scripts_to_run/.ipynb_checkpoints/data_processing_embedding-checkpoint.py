@@ -30,14 +30,12 @@ Usage Examples:
 
 sys.path.append(os.path.abspath('../src'))
 
-# Setup Args
 parser = argparse.ArgumentParser(description="Compute Embeddings")
 parser.add_argument("data_df_path", type=str, help="dataframe path")
 parser.add_argument("--RC", action="store_true", help="Passa questo flag se vuoi calcolare il Reverse Complement")
 parser.add_argument("name_saved", type=str, help="The name of the final pickle")
 args = parser.parse_args()
 
-# Setup Device and Model
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using device: {device}")
 

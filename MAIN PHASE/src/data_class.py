@@ -1,69 +1,9 @@
 import torch
 from torch.utils.data import Dataset
-
-# class Nuc_Dataset(Dataset):
-#     def __init__(self, data, dim_embedding, drop_last=False):
-#         self.data = data
-#         self.dim_embedding = dim_embedding
-#         self.drop_last = drop_last
-
-#     def __len__(self):
-#         return len(self.data)
-
-#     def __getitem__(self, idx):
-#         sample = self.data[idx]
-
-#         if self.drop_last:
-#             try:
-            
-#                 return {
-#                 'sequence':sample['sequence'],
-#                 'length': torch.tensor(144, dtype=torch.int64),
-#                 # 'embedding_CLS': sample['embedding'][0].clone().detach(),
-#                 # 'embedding': sample['embedding'][0:-3].clone().detach(),
-#                 # 'embedding_CLS_rev': sample['embedding_rev'][0].clone().detach(),
-#                 # 'embedding_rev': sample['embedding_rev'][0:-3].clone().detach(),
-#                 'label': torch.tensor(sample['label'], dtype=torch.int64) if not isinstance(sample['label'], torch.Tensor) else sample['label'].clone().detach().to(torch.int64),}
-                
-#             except:
-#                 return {
-#                 'sequence':sample['sequence'],
-
-#                 'length': torch.tensor(144, dtype=torch.int64),
-#                 # 'embedding_CLS': sample['embedding'][0].clone().detach(),
-#                 # 'embedding': sample['embedding'][0:-3].clone().detach(),
-#                 # 'embedding_CLS_rev': sample['embedding'][0].clone().detach(),
-#                 # 'embedding_rev': sample['embedding'][0:-3].clone().detach(),
-#                 'label': torch.tensor(sample['label'], dtype=torch.int64) if not isinstance(sample['label'], torch.Tensor) else sample['label'].clone().detach().to(torch.int64),}
-#         else:
-                
-#             try:
-            
-#                 return {
-#                 'sequence':sample['sequence'],
-
-#                 'length': torch.tensor(144, dtype=torch.int64),
-#                 # 'embedding_CLS': sample['embedding'][0].clone().detach(),
-#                 # 'embedding': sample['embedding'].clone().detach(),
-#                 # 'embedding_CLS_rev': sample['embedding_rev'][0].clone().detach(),
-#                 # 'embedding_rev': sample['embedding_rev'].clone().detach(),
-#                 'label': torch.tensor(sample['label'], dtype=torch.int64) if not isinstance(sample['label'], torch.Tensor) else sample['label'].clone().detach().to(torch.int64),}
-                
-#             except:
-#                 return {
-#                 'sequence':sample['sequence'],
-
-#                 'length': torch.tensor(144, dtype=torch.int64),
-#                 # 'embedding_CLS': sample['embedding'][0].clone().detach(),
-#                 # 'embedding': sample['embedding'].clone().detach(),
-#                 # 'embedding_CLS_rev': sample['embedding'][0].clone().detach(),
-#                 # 'embedding_rev': sample['embedding'].clone().detach(),
-#                 'label': torch.tensor(sample['label'], dtype=torch.int64) if not isinstance(sample['label'], torch.Tensor) else sample['label'].clone().detach().to(torch.int64),}
-
 import torch
 from torch.utils.data import Dataset
 from transformers import AutoTokenizer
-from Bio.Seq import Seq # Opzionale, se serve calcolare RC al volo
+from Bio.Seq import Seq 
 
 class Nuc_Dataset(Dataset):
     def __init__(self, data, max_length=37, rc_augmentation=True):
@@ -77,7 +17,6 @@ class Nuc_Dataset(Dataset):
         self.max_length = max_length
         self.rc_augmentation = rc_augmentation
         
-        # Inizializza il tokenizer qui
         self.tokenizer = AutoTokenizer.from_pretrained(
             "InstaDeepAI/nucleotide-transformer-2.5B-multi-species"
         )
@@ -106,13 +45,11 @@ class Nuc_Dataset(Dataset):
             'label': torch.tensor(item['label'], dtype=torch.float32)
         }
 
-        # 2. Reverse Complement (Se richiesto)
+        # 2. Reverse Complement 
         if self.rc_augmentation:
-            # Controlla se 'sequence_rev' è già pre-calcolato nel dataset
             if 'sequence_rev' in item:
                 seq_rc = item['sequence_rev']
             else:
-                # Fallback: calcola al volo se manca (richiede Bio.Seq)
                 seq_rc = str(Seq(item['sequence']).reverse_complement())
 
             tokens_rc = self.tokenization(seq_rc)

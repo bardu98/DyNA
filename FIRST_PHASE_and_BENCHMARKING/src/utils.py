@@ -1,12 +1,11 @@
 import os
-import gc                       # Per il Garbage Collector (gc.collect)
+import gc                       
 import torch
-import torch.nn as nn           # Per nn.BCEWithLogitsLoss
+import torch.nn as nn           
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt # Per i grafici (plt.figure, plt.plot, ecc.)
+import matplotlib.pyplot as plt 
 
-# Tutte le metriche di scikit-learn utilizzate
 from sklearn.metrics import (
     matthews_corrcoef,
     confusion_matrix,
@@ -68,13 +67,11 @@ def training_validation_and_test_loop_classification(
             total_loss += loss.item()
             batch_count += 1
 
-            # Prendi probabilità e spostale su CPU come numpy (detach per rimuovere grafo)
             probs = torch.sigmoid((output + output_rc) / 2).detach().cpu().numpy()
             all_probs.extend(probs.tolist())
             all_labels.extend(labels.detach().cpu().numpy().tolist())
 
 
-        # calcoli training
         train_loss = total_loss / batch_count if batch_count > 0 else 0.0
         loss_train.append(train_loss)
 
@@ -202,7 +199,6 @@ def classification_metrics(y_true, y_pred_probs, threshold=0.5):
     y_pred_probs = np.array(y_pred_probs).ravel()
     y_pred = (y_pred_probs >= threshold).astype(int)
 
-    # Confusion matrix
     tn, fp, fn, tp = confusion_matrix(y_true, y_pred).ravel()
     print('final threshold', threshold)
 
@@ -227,39 +223,6 @@ def classification_metrics(y_true, y_pred_probs, threshold=0.5):
     df_results.to_csv(csv_path, index=False)
     print(f"File CSV con predizioni salvato in {csv_path}")
 
-    # # ==================== ROC CURVE ====================
-    # fpr, tpr, _ = roc_curve(y_true, y_pred_probs)
-
-    # plt.figure(figsize=(6, 6))
-    # plt.plot(fpr, tpr, label=f"AUC = {auc:.3f}", linewidth=2)
-    # plt.plot([0, 1], [0, 1], "k--", alpha=0.4)
-    # plt.xlabel("False Positive Rate")
-    # plt.ylabel("True Positive Rate (Sensitivity)")
-    # plt.title("ROC Curve")
-    # plt.legend(loc="lower right")
-    # plt.tight_layout()
-
-    # roc_path = os.path.join(save_dir, "roc_AUC.png")
-    # plt.savefig(roc_path, dpi=300)
-    # plt.close()
-    # print(f"ROC curve salvata in {roc_path}")
-
-    # # ==================== PR CURVE ====================
-    # precision, recall, _ = precision_recall_curve(y_true, y_pred_probs)
-
-    # plt.figure(figsize=(6, 6))
-    # plt.plot(recall, precision, linewidth=2)
-    # plt.xlabel("Recall")
-    # plt.ylabel("Precision")
-    # plt.title(f"Precision-Recall Curve (AP = {pr_auc:.3f})")
-    # plt.tight_layout()
-
-    # pr_path = os.path.join(save_dir, "pr_curve.png")
-    # plt.savefig(pr_path, dpi=300)
-    # plt.close()
-    # print(f"PR curve salvata in {pr_path}")
-
-    # Output metriche
     output = {
         "Sensitivity (Recall)": sensitivity,
         "Specificity": specificity,

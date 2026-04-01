@@ -1,10 +1,10 @@
-# DyNA (CadmusDNA): Interpretable Nucleosome Prediction
+# 🦕🧬DyNA: A Transformer-based Dyad-centered Nucleosome Architecture for Interpretable Prediction
 
-This repository contains the official implementation of the **DyNA** (also referred to as **CadmusDNA** in the codebase) architecture, a Transformer-based model designed for high-accuracy and interpretable nucleosome positioning prediction. 
+This repository contains the official implementation of the **DyNA** architecture, a Transformer-based model designed for high-accuracy and interpretable nucleosome positioning prediction. 
 
 The pipeline is divided into two main phases: an initial benchmarking/hyperparameter optimization phase, and the main training/testing phase which includes downstream explainability studies.
 
-![Testo alternativo](CadmusDNA.png)
+![Testo alternativo](DyNA.png)
 ---
 
 ## Phase 1: Benchmarking & Hyperparameter Tuning
