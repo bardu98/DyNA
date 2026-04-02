@@ -158,3 +158,12 @@ Upon completion, you will find the following files in the directory specified by
 1. **`predictions.csv`**: A CSV file containing the computed probabilities (`probabilities`) and the predicted labels (`predictions`) for each sequence.
 2. **`attention_matrices.pkl`**: A Pickle file containing the raw attention matrix tensors for each sample, ready for downstream analysis.
 3. **`attention_sample_0.png`**: A bar chart (PNG) visually displaying the Attention Score across 6-mers for the first sample in your dataset.
+
+
+## 📥 Trained Model Weights
+
+The Trained model weights are hosted on Hugging Face and can be freely downloaded.
+
+You can browse and download the `.pt` files directly from this link:
+👉 [**bardu98/DyNA on Hugging Face**](https://huggingface.co/datasets/bardu98/DyNA)
+
