@@ -160,10 +160,10 @@ Upon completion, you will find the following files in the directory specified by
 3. **`attention_sample_0.png`**: A bar chart (PNG) visually displaying the Attention Score across 6-mers for the first sample in your dataset.
 
 
-## 📥 Trained Model Weights
+## Model Weights, Predictions & Attention Matrices
 
-The Trained model weights are hosted on Hugging Face and can be freely downloaded.
+All the project's heavy assets—including **trained model weights**, **model predictions**, and **attention matrices**—are hosted on Hugging Face and can be freely downloaded.
 
-You can browse and download the `.pt` files directly from this link:
+You can browse and download all the files directly from this link:
 👉 [**bardu98/DyNA on Hugging Face**](https://huggingface.co/datasets/bardu98/DyNA)
 
