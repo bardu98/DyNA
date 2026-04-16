@@ -728,7 +728,7 @@ def load_data_and_matrices(args):
     with open(os.path.join(args.data_dir, ds_map[args.cell_type]), 'rb') as f: 
         dataset = pickle.load(f)
 
-    #dataset = applica_mascheramento(dataset)  #MASKERA !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    dataset = applica_mascheramento(dataset)  #MASKERA !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
     for d in dataset: 
         d['sequence_rev'] = str(Seq(d['sequence']).reverse_complement())

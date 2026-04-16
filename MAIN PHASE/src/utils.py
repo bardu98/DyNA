@@ -1,3 +1,4 @@
+import sys
 import os
 import gc
 import numpy as np
@@ -13,7 +14,11 @@ from sklearn.metrics import (
     average_precision_score
 )
 
-import matplotlib.pyplot as plt 
+import matplotlib.pyplot as plt
+
+# Shared metrics (root src/)
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'src'))
+from metrics import classification_metrics  # noqa: F401, E402
 
 
 def output_model_from_batch_final(batch, model, device, rc=True):
@@ -202,48 +207,6 @@ def test_classification(model, dataloader_test, threshold=0.5):
     return metrics, val_labels, val_probs, importance_list, importance_rc_list, val_probs
 
 
-def classification_metrics(y_true, y_pred_probs, threshold=0.5):
-
-    y_true = np.array(y_true).ravel()
-    y_pred_probs = np.array(y_pred_probs).ravel()
-    y_pred = (y_pred_probs >= threshold).astype(int)
-
-    tn, fp, fn, tp = confusion_matrix(y_true, y_pred).ravel()
-    print('final threshold', threshold)
-
-    sensitivity = recall_score(y_true, y_pred)
-    specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
-    accuracy = accuracy_score(y_true, y_pred)
-    mcc = matthews_corrcoef(y_true, y_pred)
-    auc = roc_auc_score(y_true, y_pred_probs)
-    pr_auc = average_precision_score(y_true, y_pred_probs)
-
-    save_dir = "../data"
-    os.makedirs(save_dir, exist_ok=True)
-
-
-    df_results = pd.DataFrame({
-        'y_true': y_true,
-        'y_pred_probs': y_pred_probs,  
-        'y_pred': y_pred               
-    })
-    
-    csv_path = os.path.join(save_dir, "predictions.csv")
-    df_results.to_csv(csv_path, index=False)
-    print(f"File CSV con predizioni salvato in {csv_path}")
-
-
-    output = {
-        "Sensitivity (Recall)": sensitivity,
-        "Specificity": specificity,
-        "Accuracy": accuracy,
-        "MCC": mcc,
-        "AUC": auc,
-        "PR AUC": pr_auc
-    }
-
-    print(output)
-    return output
 
 
 

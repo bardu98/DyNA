@@ -19,9 +19,6 @@ import seaborn as sns
 from scipy.stats import mannwhitneyu, fisher_exact
 from statsmodels.stats.multitest import multipletests
 from tqdm import tqdm
-from transformers import AutoTokenizer
-from matplotlib.patches import Patch
-from matplotlib.lines import Line2D
 
 # ==============================================================================
 # 1. CONFIGURAZIONI GLOBALI E DIZIONARI BIOFISICI
@@ -41,7 +38,7 @@ HELICAL_TWIST = {'AA': 35.1, 'AC': 31.5, 'AG': 31.9, 'AT': 29.3, 'CA': 37.3, 'CC
 MAJOR_GW = {'AA': 12.15, 'AC': 12.37, 'AG': 13.51, 'AT': 12.87, 'CA': 13.58, 'CC': 15.49, 'CG': 14.42, 'CT': 13.51, 'GA': 13.93, 'GC': 14.55, 'GG': 15.49, 'GT': 12.37, 'TA': 12.32, 'TC': 13.93, 'TG': 13.58, 'TT': 12.15}
 
 # ==============================================================================
-# 2. HELPER FUNCTIONS & BP MAPPING
+# 2. HELPER FUNCTIONS
 # ==============================================================================
 def set_seed(seed=42):
     random.seed(seed)
@@ -52,8 +49,8 @@ def set_seed(seed=42):
     torch.backends.cudnn.benchmark = False
     print(f"[*] Seeds fixed (seed = {seed})")
 
-def tokenize_dna_sequence(seq, k=6, max_tokens=34):
-    return [seq[i:i + k] for i in range(0, min(len(seq), k * max_tokens), k)]
+def tokenize_dna_sequence(seq, k=6, max_tokens=33):
+    return [seq[i:i + k] for i in range(0, k * max_tokens, k)]
 
 def calculate_physics_complete(seq):
     seq = seq.upper()
@@ -68,12 +65,11 @@ def calculate_physics_complete(seq):
     }
 
 def get_valid_indices(region):
-    if region == 'dyad': return [16]
-    elif region == 'shoulder': return [12, 20]
-    elif region == 'boundary': return [4, 28] 
-    elif region == 'global': 
-        masked_regions = [3, 4, 5, 27, 28, 29]
-        return [x for x in range(34) if x not in masked_regions]
+    # NO MASK: tutti i token sono sequenza reale (1 token = 6 bp), indici 1-33 (1-indexed)
+    if region == 'dyad': return [17]
+    elif region == 'shoulder': return [13, 21]
+    elif region == 'boundary': return [3, 4, 5, 27, 28, 29]  # Bordi del nucleosoma (ora sequenza reale)
+    elif region == 'global': return list(range(1, 34))        # Tutti i 33 token, nessuna esclusione
 
 def smooth_profile(profile, window=5):
     return np.convolve(profile, np.ones(window)/window, mode='valid')
@@ -83,88 +79,38 @@ def get_sequence_shape_profile(seq, metric_dict):
     steps = [seq[i:i+2] for i in range(len(seq)-1)]
     return np.array([metric_dict.get(s, np.nan) for s in steps])
 
-def map_attention_to_bp_static(imp_array, input_ids_tensor, tokenizer, seq_len=201):
-    if imp_array.ndim > 2:
-        imp_array = np.mean(imp_array, axis=1) # Appiattiamo le teste
-    batch_size = imp_array.shape[0]
-    bp_att = np.zeros((batch_size, seq_len))
-    input_ids_list = input_ids_tensor.cpu().numpy()
-    
-    for i in tqdm(range(batch_size), desc="Mapping Attention to BP"):
-        tokens = tokenizer.convert_ids_to_tokens(input_ids_list[i])
-        seq_idx = 0
-        for t_idx, token in enumerate(tokens):
-            if token in ['[CLS]', '<cls>', '<s>', '[PAD]', '<pad>', '[SEP]', '</s>']: continue
-            clean_token = token.replace(' ', '').replace('Ġ', '')
-            if clean_token in ['[UNK]', '<unk>']: clean_token = 'N' 
-            t_len = len(clean_token)
-            if t_len == 0: continue
-            
-            end_idx = min(seq_idx + t_len, seq_len)
-            actual_len = end_idx - seq_idx
-            if actual_len > 0:
-                bp_att[i, seq_idx : end_idx] = imp_array[i, t_idx]
-                seq_idx = end_idx
-            if seq_idx >= seq_len: break
-    return bp_att
-
-def process_matrices(dataset, avg_dir, avg_rc):
-    print("[*] Avvio Base-Pair mapping per normalizzare le N...")
-    tokenizer = AutoTokenizer.from_pretrained("InstaDeepAI/nucleotide-transformer-2.5B-multi-species")
-    seqs_fw = [d['sequence'] for d in dataset]
-    seqs_rc = [d['sequence_rev'] for d in dataset]
-
-    tok_fw = tokenizer(seqs_fw, padding=True, truncation=True, return_tensors='pt')
-    tok_rc = tokenizer(seqs_rc, padding=True, truncation=True, return_tensors='pt')
-
-    bp_fw = map_attention_to_bp_static(avg_dir.numpy(), tok_fw['input_ids'], tokenizer)
-    bp_rc = map_attention_to_bp_static(avg_rc.numpy(), tok_rc['input_ids'], tokenizer)
-
-    bp_rc_flipped = np.flip(bp_rc, axis=1)
-    sym_bp_att = (bp_fw + bp_rc_flipped) / 2.0
-
-    print("[*] Ri-impacchettamento in blocchi base...")
-    N_samples = sym_bp_att.shape[0]
-    k = 6
-    num_bins = int(np.ceil(201 / k))
-    binned_att = np.zeros((N_samples, num_bins))
-
-    for i in range(N_samples):
-        for b in range(num_bins):
-            start = b * k
-            end = min((b + 1) * k, 201)
-            binned_att[i, b] = np.mean(sym_bp_att[i, start:end])
-
-    return binned_att, sym_bp_att
 
 # ==============================================================================
 # 3. EXTRACTION FUNCTIONS (PHYSICS & MOTIFS)
 # ==============================================================================
-def extract_top_kmers(mask, dataset, binned_att, args, top_k=100):
+def extract_top_kmers(mask, dataset, mat_dir, mat_rc, args, top_k=100):
     mask_tensor = torch.tensor(mask, dtype=torch.bool)
     data_filtered = list(compress(dataset, mask))
-    binned_att_filtered = binned_att[mask_tensor]
-    
+    matrices_filt_dir = mat_dir[mask_tensor]
+    matrices_filt_rc = mat_rc[mask_tensor]
+
     token_attn, token_counts = defaultdict(float), defaultdict(int)
     valid_indices = get_valid_indices(args.region)
 
-    for i, sample in enumerate(data_filtered):
-        seq = sample['sequence']
-        tokens = tokenize_dna_sequence(seq)
-        attn_row = binned_att_filtered[i] 
-        
-        for pos in valid_indices:
-            if pos < len(tokens):
-                t = tokens[pos]
-                if 'N' not in t:
-                    val = attn_row[pos]
+    for is_rc, tensor in [(False, matrices_filt_dir), (True, matrices_filt_rc)]:
+        for i, sample in enumerate(data_filtered):
+            seq = sample['sequence']
+            if is_rc: seq = str(Seq(seq).reverse_complement())
+            tokens = tokenize_dna_sequence(seq)
+            attn_row = tensor[i][0, :]
+
+            for attn_idx in valid_indices:
+                token_pos = attn_idx - 1
+                if 0 <= token_pos < len(tokens):
+                    t = tokens[token_pos]
+                    val = attn_row[attn_idx].item()
                     token_attn[t] += val
                     token_counts[t] += 1
 
-    mean_attn = {k: token_attn[k]/token_counts[k] for k in token_attn if token_counts[k] > 0}
+    mean_attn = {k: token_attn[k]/token_counts[k] for k in token_attn}
     sym_attn = {}
     used = set()
-    
+
     for k, v in mean_attn.items():
         if k in used: continue
         k_rc = str(Seq(k).reverse_complement())
@@ -181,52 +127,54 @@ def extract_top_kmers(mask, dataset, binned_att, args, top_k=100):
     top_items_raw = [i[0] for i in sorted_items[:top_k]]
     return [seq for pair in top_items_raw for seq in pair.split('\n')]
 
-def extract_attended_regions(mask, dataset, binned_att, top_k=100, context_flank=6):
+def extract_attended_regions(mask, dataset, mat_dir, mat_rc, top_k=100, context_flank=6):
     mask_tensor = torch.tensor(mask, dtype=torch.bool)
     data_filtered = list(compress(dataset, mask))
-    binned_att_filtered = binned_att[mask_tensor]
-    
-    scored_regions = []
-    valid_indices = list(range(34))
+    matrices_filt_dir = mat_dir[mask_tensor]
+    matrices_filt_rc = mat_rc[mask_tensor]
 
-    for i, sample in enumerate(data_filtered):
-        seq = sample['sequence']
-        attn_row = binned_att_filtered[i]
-        
-        for pos in valid_indices:
-            score = attn_row[pos]
-            token_start = pos * 6
-            start_ctx = max(0, token_start - context_flank)
-            end_ctx = min(len(seq), token_start + 6 + context_flank)
-            region_seq = seq[start_ctx:end_ctx]
-            
-            if len(region_seq) >= 12 and 'N' not in region_seq:
-                scored_regions.append((score, region_seq))
-                    
+    scored_regions = []
+    valid_indices = list(range(1, 34))
+
+    for is_rc, tensor in [(False, matrices_filt_dir), (True, matrices_filt_rc)]:
+        for i, sample in enumerate(data_filtered):
+            seq = str(Seq(sample['sequence']).reverse_complement()) if is_rc else sample['sequence']
+            attn_row = tensor[i][0, :]
+
+            for attn_idx in valid_indices:
+                score = attn_row[attn_idx].item()
+                token_start = (attn_idx - 1) * 6
+                start_ctx = max(0, token_start - context_flank)
+                end_ctx = min(len(seq), token_start + 6 + context_flank)
+                region_seq = seq[start_ctx:end_ctx]
+
+                if len(region_seq) >= 12:
+                    scored_regions.append((score, region_seq))
+
     scored_regions.sort(key=lambda x: x[0], reverse=True)
     return [x[1] for x in scored_regions[:top_k]]
 
 # ==============================================================================
 # 4. PLOTTING FUNCTIONS
 # ==============================================================================
-def plot_top_kmers(dataset, binned_att, args):
+def plot_top_kmers(dataset, avg_dir, avg_rc, args):
     print("[*] Generazione K-mer Lollipop Plot...")
-    valid_indices = list(range(34))
+    valid_indices = list(range(1, 34))
     token_attn, token_counts = defaultdict(float), defaultdict(int)
 
-    for i, sample in enumerate(dataset):
-        seq = sample['sequence']
-        tokens = tokenize_dna_sequence(seq)
-        attn_row = binned_att[i]
-        
-        for pos in valid_indices:
-            if pos < len(tokens):
-                t = tokens[pos]
-                if 'N' not in t:
-                    token_attn[t] += attn_row[pos]
-                    token_counts[t] += 1
+    for is_rc, att_tensor in [(False, avg_dir), (True, avg_rc)]:
+        for i, sample in enumerate(dataset):
+            seq = str(Seq(sample['sequence']).reverse_complement()) if is_rc else sample['sequence']
+            tokens = tokenize_dna_sequence(seq)
+            attn_received = att_tensor[i][0, :]
 
-    mean_attn = {k: token_attn[k] / token_counts[k] for k in token_attn if token_counts[k]>0}
+            for pos in valid_indices:
+                if pos >= len(tokens): break
+                t = tokens[pos]
+                token_attn[t] += attn_received[pos].item()
+                token_counts[t] += 1
+
+    mean_attn = {k: token_attn[k] / token_counts[k] for k in token_attn}
     sym_attn = {}
     used = set()
     for k, v in mean_attn.items():
@@ -259,108 +207,94 @@ def plot_top_kmers(dataset, binned_att, args):
     ax.set_yticklabels(labels, family='monospace')
     ax.set_xlabel("Mean Attention Weight", fontweight='bold')
     ax.set_title(f"Top {args.top_k} Most Attended 6-mers ({args.cell_type.upper()})", fontweight='bold')
-    
+
     for i, (score, y) in enumerate(zip(scores, y_pos)):
         ax.text(score + (max(scores)*0.02), y, f'{score:.3f}', va='center', fontsize=9)
     plt.tight_layout()
-    plt.savefig(os.path.join(args.out_dir, f'top{args.top_k}_kmers_{args.cell_type}_{args.filter}_MASK.png'))
+    plt.savefig(os.path.join(args.out_dir, f'top{args.top_k}_kmers_{args.cell_type}_{args.filter}_NO_MASK.png'))
+    plt.close()
+    print("[+] Plot salvato.")
+
+def plot_position_importance(avg_dir, avg_rc, args):
+    print("[*] Generazione Position Importance Bar Plot...")
+    attn_dir = avg_dir[:, 0, 1:34]
+    attn_rc = torch.flip(avg_rc[:, 0, 1:34], dims=[1])
+    attn_tot = torch.cat([attn_dir, attn_rc], axis=0)
+
+    mean_attn = torch.mean(attn_tot, dim=0).cpu().numpy()
+    sem_attn = torch.std(attn_tot, dim=0).cpu().numpy() / np.sqrt(attn_tot.shape[0])
+    positions = np.arange(1, 34)
+    labels = [f'{(p-1)*6}–{p*6}' for p in positions]
+
+    fig, ax = plt.subplots(figsize=(10, 4))
+    bars = ax.bar(positions, mean_attn, color='#006B7D', edgecolor='#004D5C', alpha=0.85)
+    ax.errorbar(positions, mean_attn, yerr=sem_attn, fmt='none', ecolor='#333333', alpha=0.6)
+
+    thresh = np.percentile(mean_attn, 75)
+    for bar, val in zip(bars, mean_attn):
+        if val >= thresh: bar.set_color('#D4880F')
+
+    ax.set_xticks(positions[::2])
+    ax.set_xticklabels(labels[::2], rotation=45, ha="right")
+    ax.set_xlabel("Sequence Position (bp)", fontweight='semibold')
+    ax.set_ylabel("Mean Attention Weight", fontweight='semibold')
+    plt.tight_layout()
+
+    plt.savefig(os.path.join(args.out_dir, f'position_importance_{args.cell_type}_NO_MASK.png'))
     plt.close()
     print("[+] Plot salvato.")
 
 
-def plot_position_importance_high_res(sym_bp_att, args):
-    print("[*] Generazione High-Resolution (3-bp) Position Importance Plot...")
-    
-    # Raggruppiamo l'attenzione a passi di 3 bp (201 / 3 = 67 bins)
-    N_samples = sym_bp_att.shape[0]
-    num_bins = 67
-    binned_att_3 = np.zeros((N_samples, num_bins))
-    for b in range(num_bins):
-        start = b * 3
-        end = min((b + 1) * 3, 201)
-        binned_att_3[:, b] = np.mean(sym_bp_att[:, start:end], axis=1)
-        
-    # Rendiamo il profilo simmetrico rispetto alla Diade (bin centrale = 33)
-    binned_att_dyad = (binned_att_3 + np.flip(binned_att_3, axis=1)) / 2.0
-    mean_attn_sym = np.mean(binned_att_dyad, axis=0)
+def plot_position_importance_symmetric(avg_dir, avg_rc, args):
+    print("[*] Generazione Position Importance Bar Plot Simmetrico (Attenzione)...")
 
-    # Mappatura Asse X (Bin 33 = 0 bp, con passi da 3)
-    positions = np.arange(67)
-    x_coords = (positions - 33) * 3
-    
-    # Calcolo zone mascherate: bin 6-11 e 55-60 corrispondono ai vecchi blocchi NNNNNN
-    masked_bins = list(range(6, 12)) + list(range(55, 61))
-    masked_x = [(p - 33) * 3 for p in masked_bins]
+    attn_dir = avg_dir[:, 0, 1:34]
+    attn_rc = torch.flip(avg_rc[:, 0, 1:34], dims=[1])
+    attn_tot = torch.cat([attn_dir, attn_rc], axis=0)
 
-    fig, ax = plt.subplots(figsize=(14, 6)) 
-    bars = ax.bar(x_coords, mean_attn_sym, width=2.6, color='#006B7D', edgecolor='#004D5C', alpha=0.9, zorder=3)
+    mean_attn = torch.mean(attn_tot, dim=0).cpu().numpy()
+    sem_attn = torch.std(attn_tot, dim=0).cpu().numpy() / np.sqrt(attn_tot.shape[0])
+
+    mean_attn_sym = (mean_attn + mean_attn[::-1]) / 2.0
+    sem_attn_sym = (sem_attn + sem_attn[::-1]) / 2.0
+
+    positions = np.arange(1, 34)
+    labels = [f'{(p-1)*6}–{p*6}' for p in positions]
+
+    fig, ax = plt.subplots(figsize=(10, 4))
+
+    bars = ax.bar(positions, mean_attn_sym, color='#006B7D', edgecolor='#004D5C', alpha=0.85)
+    ax.errorbar(positions, mean_attn_sym, yerr=sem_attn_sym, fmt='none', ecolor='#333333', alpha=0.6)
 
     thresh = np.percentile(mean_attn_sym, 75)
-    
-    for x_val, bar, val in zip(x_coords, bars, mean_attn_sym):
-        if x_val in masked_x:
-            bar.set_color('#E0E0E0')
-            bar.set_edgecolor('#999999')
-            bar.set_hatch('////')
-        elif val >= thresh: 
+    for bar, val in zip(bars, mean_attn_sym):
+        if val >= thresh:
             bar.set_color('#D4880F')
-            bar.set_edgecolor('#B8730A')
 
-    # --- LE CERNIERE STRUTTURALI MACROSCOPICHE ---
-    hinges = [
-        (15.6, 'H3-H4 Core\n(SHL $\pm$1.5)'),
-        (36.4, 'Tetramer-Dimer\nInterface (SHL $\pm$3.5)'),
-        (60.3, 'Entry/Exit\nSite (SHL $\pm$5.8)')
-    ]
-    
-    y_max = np.max(mean_attn_sym)
-    ax.set_ylim(0, y_max * 1.30)
-    text_y = y_max * 1.08
-    bbox_props = dict(boxstyle="round,pad=0.3", fc="white", ec="none", alpha=0.9)
-    
-    for pos, label in hinges:
-        ax.axvline(pos, color='#B22222', linestyle='--', linewidth=1.5, alpha=0.7, zorder=1)
-        ax.axvline(-pos, color='#B22222', linestyle='--', linewidth=1.5, alpha=0.7, zorder=1)
-        ax.text(pos, text_y, label, color='#8B0000', ha='center', va='bottom', fontsize=9, fontweight='bold', bbox=bbox_props)
-        ax.text(-pos, text_y, label, color='#8B0000', ha='center', va='bottom', fontsize=9, fontweight='bold', bbox=bbox_props)
-
-    ax.axvline(0, color='black', linestyle='-', linewidth=1.5, alpha=0.7, zorder=1)
-    ax.text(0, text_y, 'Dyad Axis\n(SHL 0.0)', color='black', ha='center', va='bottom', fontsize=9, fontweight='bold', bbox=bbox_props)
-
-    # Setup assi: un tick ogni 4 barre (12 bp) per pulizia
-    ax.set_xticks(x_coords[::4])
-    ax.set_xticklabels([f"{x:+d}" if x != 0 else "0" for x in x_coords[::4]], fontsize=11)
-    ax.set_xlabel("Distance from Dyad (bp)", fontweight='bold', fontsize=13)
-    ax.set_ylabel("Mean Attention Weight", fontweight='bold', fontsize=13)
-
-    legend_elements = [
-        Patch(facecolor='#D4880F', edgecolor='#B8730A', label='Top 25% Attended'),
-        Patch(facecolor='#006B7D', edgecolor='#004D5C', label='Standard Attention'),
-        Patch(facecolor='#E0E0E0', edgecolor='#999999', hatch='////', label='Masked Boundary'),
-        Line2D([0], [0], color='#B22222', linestyle='--', linewidth=1.5, label='Macro-Structural Landmarks')
-    ]
-    ax.legend(handles=legend_elements, loc='lower center', bbox_to_anchor=(0.5, -0.30), ncol=4, frameon=False, fontsize=11)
-    
+    ax.set_xticks(positions[::2])
+    ax.set_xticklabels(labels[::2], rotation=45, ha="right")
+    ax.set_xlabel("Sequence Position (bp)", fontweight='semibold')
+    ax.set_ylabel("Mean Attention Weight", fontweight='semibold')
     plt.tight_layout()
-    save_path = os.path.join(args.out_dir, f'position_importance_3bp_res_{args.cell_type}_MASK.png')
-    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    save_path = os.path.join(args.out_dir, f'position_importance_symmetric_{args.cell_type}_NO_MASK.png')
+    plt.savefig(save_path, dpi=300)
     plt.close()
+
     print(f"[+] Plot salvato in: {save_path}")
 
-
-def plot_biophysical_profiles(dataset_all, binned_att, preds_int, val_labels, args):
+def plot_biophysical_profiles(dataset_all, avg_dir_all, avg_rc_all, preds_int, val_labels, args):
     print(f"[*] Generazione Biophysical Profiles ({args.region.upper()} region)...")
 
     mask_pp = [p == 1 for p in preds_int]
     mask_pn = [p == 0 for p in preds_int]
-    
-    seq_pos = extract_top_kmers(mask_pp, dataset_all, binned_att, args, top_k=100)
-    seq_neg = extract_top_kmers(mask_pn, dataset_all, binned_att, args, top_k=100)
-    
+
+    seq_pos = extract_top_kmers(mask_pp, dataset_all, avg_dir_all, avg_rc_all, args, top_k=100)
+    seq_neg = extract_top_kmers(mask_pn, dataset_all, avg_dir_all, avg_rc_all, args, top_k=100)
+
     all_seqs = [d['sequence'] for d in dataset_all]
     seq_sample = random.sample(all_seqs, min(2000, len(all_seqs)))
     raw_bg = [s[i:i+6] for s in seq_sample for i in range(len(s)-5)]
-    seq_bg = random.sample([s for s in raw_bg if 'N' not in s], min(50000, len(raw_bg)))
+    seq_bg = random.sample(raw_bg, min(50000, len(raw_bg)))
 
     data_plot = []
     for seq, group in zip([seq_pos, seq_bg, seq_neg], ['Nucleosome Anchors\n(Predicted Positives)', 'Global Background', 'Nucleosome Exclusion\n(Predicted Negatives)']):
@@ -371,26 +305,26 @@ def plot_biophysical_profiles(dataset_all, binned_att, preds_int, val_labels, ar
 
     df_compare = pd.DataFrame(data_plot)
     order_plot = ['Nucleosome Anchors\n(Predicted Positives)', 'Global Background', 'Nucleosome Exclusion\n(Predicted Negatives)']
-    palette = {'Nucleosome Anchors\n(Predicted Positives)': '#D4880F', 'Global Background': '#A9A9A9', 'Nucleosome Exclusion\n(Predicted Negatives)':'#006B7D'}
-    
-    metrics = ['Propeller Twist', 'DNA Roll', 'Major Groove Width']
-    ylabels = ["Degrees\n(Less Neg = Flexible)", "Degrees\n(High = Open/Curved)", "Angstroms (Å)\n(High = Wide)"]
+    palette = {'Nucleosome Anchors\n(Predicted Positives)': '#E08E00', 'Global Background': '#A9A9A9', 'Nucleosome Exclusion\n(Predicted Negatives)':'#008C9E'}
 
-    fig, axes = plt.subplots(1, 3, figsize=(21,8))
+    metrics = ['Propeller Twist', 'Static Bending', 'DNA Roll', 'Minor Groove Width', 'Helical Twist', 'Major Groove Width']
+    ylabels = ["Degrees\n(Less Neg = Flexible)", "Degrees\n(High = Kink)", "Degrees\n(High = Open/Curved)", "Angstroms (Å)\n(Low = Narrow)", "Degrees\n(High = Tighter Helix)", "Angstroms (Å)\n(High = Wide)"]
+
+    fig, axes = plt.subplots(3, 2, figsize=(16,21))
     for i, metric in enumerate(metrics):
         ax = axes.flatten()[i]
-        sns.violinplot(data=df_compare, x='Group', y=metric, order=order_plot, palette=palette, ax=ax, inner="quartile", cut=0,saturation=1)
-        
+        sns.violinplot(data=df_compare, x='Group', y=metric, order=order_plot, palette=palette, ax=ax, inner="quartile", cut=0)
+
         vals_pos = df_compare[df_compare['Group']=='Nucleosome Anchors\n(Predicted Positives)'][metric]
         vals_bg = df_compare[df_compare['Group']=='Global Background'][metric]
         vals_neg = df_compare[df_compare['Group']=='Nucleosome Exclusion\n(Predicted Negatives)'][metric]
-        
+
         _, p_pos = mannwhitneyu(vals_pos, vals_bg, alternative='two-sided')
         _, p_neg = mannwhitneyu(vals_neg, vals_bg, alternative='two-sided')
-        
+
         y_max, y_range = df_compare[metric].max(), df_compare[metric].max() - df_compare[metric].min()
         h = y_range * 0.03
-        
+
         def annot_stat(x1, x2, y, h, p):
             ax.plot([x1, x1, x2, x2], [y, y+h, y+h, y], lw=1.5, c='k')
             ax.text((x1+x2)*.5, y+h, "p < 0.001" if p < 0.001 else f"p = {p:.2e}", ha='center', va='bottom', color='k', fontsize=15, fontweight='bold')
@@ -405,52 +339,57 @@ def plot_biophysical_profiles(dataset_all, binned_att, preds_int, val_labels, ar
         ax.set_xticklabels(['Nucleosome Anchoring\n(PP)', 'Global\nBackground', 'Nucleosome Exclusion\n(PN)'], fontsize=15)
         ax.tick_params(axis='y', labelsize=14)
 
-    plt.suptitle(f"Biophysical Profiles: Predicted Positives vs Predicted Negatives {args.region.capitalize()} Region", fontsize=21, y=1.04, fontweight='bold')
+    if args.cell_type.upper() == 'ACT':
+        plt.suptitle(f"Biophysical Profiles in Activated Cells: Predicted Positives vs Predicted Negatives {args.region.capitalize()} Region Analysis", fontsize=21, y=1.04, fontweight='bold')
+    elif args.cell_type.upper() == 'REST':
+        plt.suptitle(f"Biophysical Profiles in Resting Cells: Predicted Positives vs Predicted Negatives {args.region.capitalize()} Region Analysis", fontsize=21, y=1.04, fontweight='bold')
+    else:
+        plt.suptitle(f"Biophysical Profiles in Limphoblastoid Cells: Predicted Positives vs Predicted Negatives {args.region.capitalize()} Region Analysis", fontsize=21, y=1.04, fontweight='bold')
+
     plt.tight_layout()
     plt.subplots_adjust(top=0.93, hspace=0.35, wspace=0.25)
-    
-    plt.savefig(os.path.join(args.out_dir, f'biophysical_profiles_{args.region}_{args.cell_type}_MASK.png'), bbox_inches='tight')
+    plt.savefig(os.path.join(args.out_dir, f'biophysical_profiles_{args.region}_{args.cell_type}_NO_MASK.png'), bbox_inches='tight')
     plt.close()
     print("[+] Plot salvato.")
 
-def plot_motif_enrichment(dataset_all, binned_att, preds_int, val_labels, args):
+def plot_motif_enrichment(dataset_all, avg_dir_all, avg_rc_all, preds_int, val_labels, args):
     print("[*] Download JASPAR e scansione Motif Enrichment (potrebbe richiedere tempo)...")
 
     mask_pp = [p == 1 for p in preds_int]
     mask_pn = [p == 0 for p in preds_int]
-    
-    seqs_pos = extract_attended_regions(mask_pp, dataset_all, binned_att, top_k=100)
-    seqs_neg = extract_attended_regions(mask_pn, dataset_all, binned_att, top_k=100)
-    
+
+    seqs_pos = extract_attended_regions(mask_pp, dataset_all, avg_dir_all, avg_rc_all, top_k=100)
+    seqs_neg = extract_attended_regions(mask_pn, dataset_all, avg_dir_all, avg_rc_all, top_k=100)
+
     full_text = "".join(seqs_pos + seqs_neg)
     tot = len(full_text)
     bg_dist = {n: full_text.count(n)/tot for n in 'ACGT'}
-    
+
     jaspar_file = "JASPAR2022_CORE_vertebrates.txt"
     if not os.path.exists(jaspar_file) or os.path.getsize(jaspar_file) < 1000:
         url = "https://jaspar.elixir.no/download/data/2024/CORE/JASPAR2024_CORE_vertebrates_non-redundant_pfms_jaspar.txt"
         with open(jaspar_file, 'wb') as f: f.write(requests.get(url).content)
-            
+
     with open(jaspar_file) as handle:
         motif_list = [m for m in motifs.parse(handle, "jaspar") if m.counts is not None and len(m.counts) > 0]
 
     results, total_pos, total_neg = [], len(seqs_pos), len(seqs_neg)
-    
+
     for m in tqdm(motif_list, desc="Scansione Motivi"):
         try:
             m.background = bg_dist
             pssm = m.counts.normalize(pseudocounts=0.5).log_odds(bg_dist)
             threshold = pssm.max * 0.80
-            
+
             hits_pos = sum(1 for seq in seqs_pos if len(seq) >= m.length and max(pssm.calculate(Seq(seq))) > threshold)
             hits_neg = sum(1 for seq in seqs_neg if len(seq) >= m.length and max(pssm.calculate(Seq(seq))) > threshold)
-            
+
             if (hits_pos + hits_neg) < 3: continue
-            
+
             _, p_val = fisher_exact([[hits_pos, total_pos - hits_pos], [hits_neg, total_neg - hits_neg]])
             freq_pos, freq_neg = hits_pos / total_pos, hits_neg / total_neg
             log2fc = np.log2((freq_pos + 1e-6) / (freq_neg + 1e-6))
-            
+
             results.append({'ID': m.matrix_id, 'Name': m.name, 'Log2FC': log2fc, 'P-value': p_val})
         except: continue
 
@@ -461,114 +400,123 @@ def plot_motif_enrichment(dataset_all, binned_att, preds_int, val_labels, args):
 
     _, df_res['FDR'], _, _ = multipletests(df_res['P-value'], method='fdr_bh')
     df_res['-log10 FDR'] = -np.log10(df_res['FDR'] + 1e-100)
-    
+
     plt.figure(figsize=(8, 5))
     colors = df_res.apply(lambda r: '#D4880F' if r['Log2FC']>0.5 and r['FDR']<=0.05 else ('#006B7D' if r['Log2FC']<-0.5 and r['FDR']<=0.05 else '#E0E0E0'), axis=1)
     sns.scatterplot(data=df_res, x='Log2FC', y='-log10 FDR', c=colors, s=100, alpha=0.9, edgecolor='black')
-    
+
     plt.axhline(-np.log10(0.05), linestyle='--', color='gray')
     plt.axvline(0.5, linestyle=':', color='gray'); plt.axvline(-0.5, linestyle=':', color='gray')
-    
+
     top_hits = pd.concat([df_res[(df_res['Log2FC']>0.5) & (df_res['FDR']<=0.05)].head(2), df_res[(df_res['Log2FC']<-0.5) & (df_res['FDR']<=0.05)].head(2)])
     for _, row in top_hits.iterrows():
         plt.text(row['Log2FC'], row['-log10 FDR']+0.6, row['Name'], fontsize=9, fontweight='bold', ha='center')
-    
+
     plt.title(f"Motif Enrichment in Top Attended Regions ({args.cell_type.upper()})", fontsize=14, fontweight='bold')
     plt.xlabel("Log2 Fold Change (Linker <-> Nucleosome)", fontsize=12)
     plt.tight_layout()
-    plt.savefig(os.path.join(args.out_dir, f'motif_enrichment_{args.cell_type}_MASK.png'), bbox_inches='tight')
+    plt.savefig(os.path.join(args.out_dir, f'motif_enrichment_{args.cell_type}_NO_MASK.png'), bbox_inches='tight')
     plt.close()
     print("[+] Plot salvato.")
 
 def plot_biophysical_metaprofiles(dataset_all, preds_int, val_labels, args):
     print("[*] Generazione Biophysical Metaprofiles (Line plots)...")
-    
+
     mask_tp = [(p == 1 and tl == 1) for p, tl in zip(preds_int, val_labels)]
     mask_tn = [(p == 0 and tl == 0) for p, tl in zip(preds_int, val_labels)]
-    
+
     seqs_tp = [d['sequence'] for d in compress(dataset_all, mask_tp)]
     seqs_tn = [d['sequence'] for d in compress(dataset_all, mask_tn)]
-    
+
     metrics = {
-        'Propeller Twist': PROP_TWIST_DIPRO, 'Static Bending': BENDABILITY,
-        'DNA Roll': ROLL_DIPRO, 'Minor Groove Width': MGW,
-        'Helical Twist': HELICAL_TWIST, 'Major Groove Width': MAJOR_GW
+        'Propeller Twist': PROP_TWIST_DIPRO,
+        'Static Bending': BENDABILITY,
+        'DNA Roll': ROLL_DIPRO,
+        'Minor Groove Width': MGW,
+        'Helical Twist': HELICAL_TWIST,
+        'Major Groove Width': MAJOR_GW
     }
-    
+
     ylabels = [
-        "Degrees (Less Neg = Flexible)", "Degrees (High = Kink)", 
-        "Degrees (High = Open)", "Angstroms (Å) (Low = Narrow)", 
+        "Degrees (Less Neg = Flexible)", "Degrees (High = Kink)",
+        "Degrees (High = Open)", "Angstroms (Å) (Low = Narrow)",
         "Degrees (High = Tighter Helix)", "Angstroms (Å) (High = Wide)"
     ]
 
     fig, axes = plt.subplots(3, 2, figsize=(16, 12))
-    window_size = 5 
-    
+    window_size = 5
+
     for i, (metric_name, metric_dict) in enumerate(metrics.items()):
         ax = axes.flatten()[i]
+
         profiles_tp = np.array([get_sequence_shape_profile(s, metric_dict) for s in seqs_tp])
         profiles_tn = np.array([get_sequence_shape_profile(s, metric_dict) for s in seqs_tn])
-        
+
         mean_tp = np.nanmean(profiles_tp, axis=0)
         mean_tn = np.nanmean(profiles_tn, axis=0)
-        
+
         smooth_tp = smooth_profile(mean_tp, window=window_size)
         smooth_tn = smooth_profile(mean_tn, window=window_size)
-        
+
         offset = window_size // 2
         x_axis = np.arange(len(smooth_tp)) - (100 - offset)
-        
-        ax.plot(x_axis, smooth_tp, label='Nucleosome Anchoring (TP)', color='#B8730A', linewidth=2.5)
-        ax.plot(x_axis, smooth_tn, label='Nucleosome Exclusion (TN)', color='#006B7D', linewidth=2.5, linestyle='--')
+
+        ax.plot(x_axis, smooth_tp, label='Nucleosome Anchoring (TP)', color='#E08E00', linewidth=2.5)
+        ax.plot(x_axis, smooth_tn, label='Nucleosome Exclusion (TN)', color='#008C9E', linewidth=2.5, linestyle='--')
         ax.axvline(0, color='#666666', linestyle=':', alpha=0.5)
-        
+
         ax.set_title(metric_name, fontsize=14, fontweight='bold')
         ax.set_ylabel(ylabels[i], fontsize=11)
         ax.set_xlabel("Distance from Dyad (bp)", fontsize=11)
         if i == 0:
             ax.legend(loc='upper right', frameon=False, fontsize=11)
 
-    plt.suptitle(f"Biophysical Metaprofiles in {args.cell_type.upper()}: Periodic Wave Signatures", 
+    plt.suptitle(f"Biophysical Metaprofiles in {args.cell_type.upper()}: Periodic Wave Signatures",
                  fontsize=18, y=1.02, fontweight='bold')
     plt.tight_layout()
-    plt.savefig(os.path.join(args.out_dir, f'biophysical_metaprofiles_{args.cell_type}_MASK.png'), bbox_inches='tight')
+    plt.savefig(os.path.join(args.out_dir, f'biophysical_metaprofiles_{args.cell_type}_NO_MASK.png'), bbox_inches='tight')
     plt.close()
     print("[+] Plot Metaprofilo salvato.")
 
-def plot_attention_driven_physics(dataset_all, binned_att, preds_int, val_labels, args):
+def plot_attention_driven_physics(dataset_all, avg_dir_all, avg_rc_all, preds_int, val_labels, args):
     print("[*] Generazione Attention-Driven Physics Profiles (High vs Low Attn in TP)...")
-    
+
     mask_tp = [(p == 1 and tl == 1) for p, tl in zip(preds_int, val_labels)]
     mask_tensor = torch.tensor(mask_tp, dtype=torch.bool)
-    
+
     data_tp = list(compress(dataset_all, mask_tp))
-    binned_att_tp = binned_att[mask_tensor]
-    
-    core_indices = list(range(6, 27))
-    
+    attn_dir_tp = avg_dir_all[mask_tensor]
+    attn_rc_tp = avg_rc_all[mask_tensor]
+
+    # NO MASK: tutti i 33 token sono sequenza reale, nessuna esclusione
+    core_indices = list(range(1, 34))
+
     high_attn_physics = []
     low_attn_physics = []
-    
+
     for i, sample in enumerate(data_tp):
         seq = sample['sequence']
-        attn_row = binned_att_tp[i]
-        
-        core_attn = [(idx, attn_row[idx]) for idx in core_indices]
+
+        a_dir = attn_dir_tp[i][0, :].cpu().numpy()
+        a_rc = torch.flip(attn_rc_tp[i][0, :], dims=[0]).cpu().numpy()
+        a_tot = (a_dir + a_rc) / 2.0
+
+        core_attn = [(idx, a_tot[idx]) for idx in core_indices]
         core_attn.sort(key=lambda x: x[1], reverse=True)
-        
+
         top_indices = [x[0] for x in core_attn[:3]]
         bottom_indices = [x[0] for x in core_attn[-3:]]
-        
+
         for idx in top_indices:
-            start = idx * 6
+            start = (idx - 1) * 6
             kmer = seq[start:start+6]
             if 'N' not in kmer:
                 res = calculate_physics_complete(kmer)
                 res['Attention Level'] = 'High Attention\n(Top 3 k-mers)'
                 high_attn_physics.append(res)
-                
+
         for idx in bottom_indices:
-            start = idx * 6
+            start = (idx - 1) * 6
             kmer = seq[start:start+6]
             if 'N' not in kmer:
                 res = calculate_physics_complete(kmer)
@@ -581,20 +529,21 @@ def plot_attention_driven_physics(dataset_all, binned_att, preds_int, val_labels
     palette = {'High Attention\n(Top 3 k-mers)': '#D4880F', 'Ignored\n(Bottom 3 k-mers)': '#555555'}
 
     fig, axes = plt.subplots(3, 2, figsize=(14, 16))
+
     for j, metric in enumerate(metrics):
         ax = axes.flatten()[j]
         sns.violinplot(data=df_plot, x='Attention Level', y=metric, palette=palette, ax=ax, inner="quartile", cut=0)
-        
+
         vals_high = df_plot[df_plot['Attention Level']=='High Attention\n(Top 3 k-mers)'][metric]
         vals_low = df_plot[df_plot['Attention Level']=='Ignored\n(Bottom 3 k-mers)'][metric]
         _, p_val = mannwhitneyu(vals_high, vals_low, alternative='two-sided')
-        
+
         y_max = df_plot[metric].max()
         y_range = df_plot[metric].max() - df_plot[metric].min()
-        
+
         ax.plot([0, 0, 1, 1], [y_max + y_range*0.05, y_max + y_range*0.08, y_max + y_range*0.08, y_max + y_range*0.05], lw=1.5, c='k')
         ax.text(0.5, y_max + y_range*0.09, "p < 0.001" if p_val < 0.001 else f"p = {p_val:.2e}", ha='center', va='bottom', color='k', fontsize=15, fontweight='bold')
-        
+
         ax.set_title(metric, fontsize=15, fontweight='bold')
         ax.set_ylabel(ylabels[j], fontsize=15)
         ax.set_xlabel("")
@@ -602,19 +551,20 @@ def plot_attention_driven_physics(dataset_all, binned_att, preds_int, val_labels
 
     plt.suptitle(f"What the Model is Actually Looking At ({args.cell_type.upper()})\nHigh vs Low Attended Regions within True Positives", fontsize=18, y=1.02, fontweight='bold')
     plt.tight_layout()
-    plt.savefig(os.path.join(args.out_dir, f'attention_driven_physics_{args.cell_type}_MASK.png'), bbox_inches='tight')
+    plt.savefig(os.path.join(args.out_dir, f'attention_driven_physics_{args.cell_type}_NO_MASK.png'), bbox_inches='tight')
     plt.close()
     print("[+] Plot salvato.")
 
-def plot_nucleotide_composition(dataset_all, binned_att, preds_int, val_labels, args):
+
+def plot_nucleotide_composition(dataset_all, avg_dir_all, avg_rc_all, preds_int, val_labels, args):
     print(f"[*] Generazione Nucleotide Composition Profiling ({args.region.upper()} region)...")
-    
+
     mask_pp = [p == 1 for p in preds_int]
     mask_pn = [p == 0 for p in preds_int]
-    
-    seq_pos = extract_top_kmers(mask_pp, dataset_all, binned_att, args, top_k=300)
-    seq_neg = extract_top_kmers(mask_pn, dataset_all, binned_att, args, top_k=300)
-    
+
+    seq_pos = extract_top_kmers(mask_pp, dataset_all, avg_dir_all, avg_rc_all, args, top_k=300)
+    seq_neg = extract_top_kmers(mask_pn, dataset_all, avg_dir_all, avg_rc_all, args, top_k=300)
+
     all_seqs = [d['sequence'] for d in dataset_all]
     seq_sample = random.sample(all_seqs, min(2000, len(all_seqs)))
     raw_bg = [s[i:i+6] for s in seq_sample for i in range(len(s)-5)]
@@ -624,7 +574,7 @@ def plot_nucleotide_composition(dataset_all, binned_att, preds_int, val_labels, 
         di_counts = {n1+n2: 0 for n1 in 'ACGT' for n2 in 'ACGT'}
         tot_di = 0
         for seq in seq_list:
-            if 'N' in seq: continue 
+            if 'N' in seq: continue
             for i in range(len(seq)-1):
                 di = seq[i:i+2]
                 if di in di_counts:
@@ -647,93 +597,58 @@ def plot_nucleotide_composition(dataset_all, binned_att, preds_int, val_labels, 
     sorted_dinucl = sorted(diff_dict.keys(), key=lambda x: diff_dict[x], reverse=True)
 
     fig=plt.figure(figsize=(14, 6))
-    palette = {'Nucleosome Anchoring\n(Predicted Positives)': '#D4880F', 
-               'Global Background': '#A9A9A9', 
-               'Nucleosome Exclusion\n(Predicted Negatives)':'#006B7D'}
-    
-    sns.barplot(data=df_comp, x='Dinucleotide', y='Frequency (%)', hue='Group', 
-                order=sorted_dinucl, palette=palette, edgecolor='black', alpha=0.9,saturation=1)
-    
-    plt.title(f"Dinucleotide Content of the Most Attended Regions ({args.cell_type.upper()})", 
+    palette = {'Nucleosome Anchoring\n(Predicted Positives)': '#E08E00',
+               'Global Background': '#A9A9A9',
+               'Nucleosome Exclusion\n(Predicted Negatives)':'#008C9E'}
+
+    sns.barplot(data=df_comp, x='Dinucleotide', y='Frequency (%)', hue='Group',
+                order=sorted_dinucl, palette=palette, edgecolor='black', alpha=0.9)
+
+    plt.title(f"Dinucleotide Content of the Most Attended Regions ({args.cell_type.upper()})",
               fontsize=16, fontweight='bold', pad=15)
     plt.ylabel("Relative Frequency (%)", fontsize=15, fontweight='bold')
     plt.xlabel("Dinucleotide Step", fontsize=15, fontweight='bold')
-    
+
     plt.legend(title="", fontsize=15, frameon=False)
     sns.despine()
-    
+
     plt.tight_layout()
-    ax = plt.gca()
-    save_path = os.path.join(args.out_dir, f'nucleotide_composition_{args.region}_{args.cell_type}_MASK.png')
+    save_path = os.path.join(args.out_dir, f'nucleotide_composition_{args.region}_{args.cell_type}_NO_MASK.png')
     plt.savefig(save_path, dpi=300)
     plt.close()
-    print(f"[+] Plot Composizione Nucleotidica salvato in: {save_path}")
 
-def applica_mascheramento(dataset):
-    for d in dataset:
-        seq = d['sequence']
-        masked_seq = seq[:18] + ('N' * 18) + seq[36:162] + ('N' * 18) + seq[180:]
-        d['sequence'] = masked_seq
-    return dataset
+    print(f"[+] Plot Composizione Nucleotidica salvato in: {save_path}")
 
 # ==============================================================================
 # 5. MAIN LOGIC E CARICAMENTO
 # ==============================================================================
 def load_data_and_matrices(args):
-    print(f"[*] Caricamento dataset: {args.cell_type.upper()}")
+    print(f"[*] Caricamento dataset: {args.cell_type.upper()} (NO MASK)")
+    ds_map = {'lympho': 'Lymphoblastoid_99_8_percentile.pkl', 'act': 'CD4T_h19_Act_tot_99_8_percentile.pkl', 'rest': 'CD4T_h19_Rest_tot_99_8_percentile.pkl'}
+    pred_map = {'lympho': 'preds_lymp_model_sum_folds_16_02_26.pkl', 'act': 'preds_act_model_sum_folds_16_02_26.pkl', 'rest': 'preds_rest_model_sum_folds_16_02_26.pkl'}
+    mat_type = 'lymp' if args.cell_type == 'lympho' else args.cell_type
 
-    ds_map = {
-        'lympho': '../../INFERENCE/NuPoSe_Yosef_Data/Lympho_Nucleosomal_TOT.pkl', 
-        'act': '../../INFERENCE/NuPoSe_Yosef_Data/ActivatingNuclesomal_TOT.pkl', 
-        'rest': '../../INFERENCE/NuPoSe_Yosef_Data/RestingNuclesomal_TOT.pkl' # Corretto resting maiuscolo/minuscolo se serve
-    }
-    
-    # Nomi esatti per le predizioni
-    pred_map = {
-        'lympho': 'preds_lymphoblastoid_best_model_YOSEF.pkl', 
-        'act': 'preds_act_best_model_YOSEF.pkl', 
-        'rest': 'preds_rest_best_model_YOSEF.pkl' # <-- Inserisci il nome corretto qui se manca
-    }
-    
-    # Mappatura per il nome del file .pt
-    mat_type = {
-        'lympho': 'lymphoblastoid', 
-        'act': 'act', 
-        'rest': 'rest'
-    }
-
-    with open(os.path.join(args.data_dir, ds_map[args.cell_type]), 'rb') as f: 
+    with open(os.path.join(args.data_dir, ds_map[args.cell_type]), 'rb') as f:
         dataset = pickle.load(f)
 
-    dataset = applica_mascheramento(dataset) 
-    for d in dataset: 
+    # Nessun mascheramento: la sequenza viene usata così com'è
+    for d in dataset:
         d['sequence_rev'] = str(Seq(d['sequence']).reverse_complement())
 
-    print("[*] Elaborazione matrice attenzione: Caricamento e media di tutti i 5 Folds...")
     total_matrices_dir, total_matrices_rc = None, None
+    for fold in range(5):
+        data = torch.load(os.path.join(args.results_dir, f"matrices_results_fold{fold}_{mat_type}.pt"), map_location='cpu')
+        curr_dir, curr_rc = torch.stack(data['matrices_dir']), torch.stack(data['matrices_rc'])
+        if fold == 0: total_matrices_dir, total_matrices_rc = curr_dir, curr_rc
+        else: total_matrices_dir += curr_dir; total_matrices_rc += curr_rc
 
-    file_path = os.path.join(args.results_dir, f"matrices_results_lymphoblastoid_best_model_YOSEF.pt")
-    data = torch.load(file_path, map_location='cpu')
-    
-    curr_dir = torch.stack(data['matrices_dir'])
-    curr_rc = torch.stack(data['matrices_rc'])
-    
-    total_matrices_dir, total_matrices_rc = curr_dir, curr_rc
+    avg_dir, avg_rc = total_matrices_dir / 5, total_matrices_rc / 5
+    preds_int = (pd.read_pickle(os.path.join(args.results_dir, pred_map[args.cell_type])) > 0.5).astype(int)
 
-            
-    avg_dir, avg_rc = total_matrices_dir , total_matrices_rc 
-    #preds_int = (pd.read_pickle(os.path.join(args.results_dir, pred_map[args.cell_type])) > 0.5).astype(int)
-    file_preds = os.path.join(args.results_dir, pred_map[args.cell_type])
-
-    preds_int = (np.array(pd.read_pickle(file_preds)) > 0.5).astype(int)
-
-
-    binned_att, sym_bp_att = process_matrices(dataset, avg_dir, avg_rc)
-    
-    return dataset, binned_att, sym_bp_att, preds_int
+    return dataset, avg_dir, avg_rc, preds_int
 
 def main():
-    parser = argparse.ArgumentParser(description="Explainability Tool")
+    parser = argparse.ArgumentParser(description="Explainability Tool (NO MASK)")
     parser.add_argument("--data_dir", type=str, default="../data/data_pkl", help="Cartella dei .pkl")
     parser.add_argument("--results_dir", type=str, default="../results", help="Cartella dei .pt e predizioni")
     parser.add_argument("--out_dir", type=str, default="../images", help="Cartella per salvare le immagini")
@@ -741,13 +656,13 @@ def main():
     parser.add_argument("--filter", type=str, choices=['all', 'tp', 'tn'], default='all')
     parser.add_argument("--region", type=str, choices=['dyad', 'boundary', 'global', 'shoulder'], default='global')
     parser.add_argument("--top_k", type=int, default=20)
-    
+
     parser.add_argument("--all_plots", action="store_true", help="Esegui tutti i plot")
     parser.add_argument("--plot_kmers", action="store_true")
     parser.add_argument("--plot_positions", action="store_true")
     parser.add_argument("--plot_physics", action="store_true", help="Violin plots delle proprietà biofisiche")
     parser.add_argument("--plot_motifs", action="store_true", help="Volcano plot per enrichment JASPAR")
-    parser.add_argument("--plot_composition", action="store_true", help="Bar plot della composizione nucleotidica")
+    parser.add_argument("--plot_composition", action="store_true", help="Bar plot della composizione nucleotidica (dinucleotidi)")
     args = parser.parse_args()
     set_seed(42)
     os.makedirs(args.out_dir, exist_ok=True)
@@ -755,23 +670,22 @@ def main():
     if args.all_plots:
         args.plot_kmers = args.plot_positions = args.plot_physics = args.plot_motifs = args.plot_composition = True
 
-    dataset_all, binned_att_all, sym_bp_att_all, preds_int = load_data_and_matrices(args)
+    dataset_all, avg_dir_all, avg_rc_all, preds_int = load_data_and_matrices(args)
     val_labels = [s['label'] for s in dataset_all]
 
     mask = [(p == 1 and tl == 1) for p, tl in zip(preds_int, val_labels)] if args.filter == 'tp' else \
            [(p == 0 and tl == 0) for p, tl in zip(preds_int, val_labels)] if args.filter == 'tn' else [True] * len(val_labels)
-    
+
     mask_tensor = torch.tensor(mask, dtype=torch.bool)
     dataset_filtered = list(compress(dataset_all, mask))
-    binned_att_filtered = binned_att_all[mask_tensor]
-    sym_bp_att_filtered = sym_bp_att_all[mask_tensor]
+    avg_dir_filtered, avg_rc_filtered = avg_dir_all[mask_tensor], avg_rc_all[mask_tensor]
 
-    if args.plot_kmers: plot_top_kmers(dataset_filtered, binned_att_filtered, args)
-    if args.plot_positions: plot_position_importance_high_res(sym_bp_att_filtered, args) 
-    
-    if args.plot_physics: plot_biophysical_profiles(dataset_all, binned_att_all, preds_int, val_labels, args)
-    if args.plot_motifs: plot_motif_enrichment(dataset_all, binned_att_all, preds_int, val_labels, args)
-    if args.plot_composition: plot_nucleotide_composition(dataset_all, binned_att_all, preds_int, val_labels, args)
+    if args.plot_kmers: plot_top_kmers(dataset_filtered, avg_dir_filtered, avg_rc_filtered, args)
+    if args.plot_positions: plot_position_importance_symmetric(avg_dir_filtered, avg_rc_filtered, args)
+
+    if args.plot_physics: plot_biophysical_profiles(dataset_all, avg_dir_all, avg_rc_all, preds_int, val_labels, args)
+    if args.plot_motifs: plot_motif_enrichment(dataset_all, avg_dir_all, avg_rc_all, preds_int, val_labels, args)
+    if args.plot_composition: plot_nucleotide_composition(dataset_all, avg_dir_all, avg_rc_all, preds_int, val_labels, args)
 
 if __name__ == "__main__":
     main()

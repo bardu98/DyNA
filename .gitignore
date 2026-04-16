@@ -7,3 +7,6 @@
 MAIN PHASE/data/
 MAIN PHASE/models/
 MAIN PHASE/data/
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
